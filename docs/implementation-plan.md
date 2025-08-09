@@ -24,8 +24,8 @@ talosctl gen config homelab-prod https://prod-api.internal:6443
 
 # Bootstrap clusters
 # Non-prod first for testing
-talosctl apply-config --insecure --nodes 10.0.1.10 --file controlplane.yaml
-talosctl bootstrap --nodes 10.0.1.10
+talosctl apply-config --insecure --nodes 192.168.0.50 --file controlplane.yaml
+talosctl bootstrap --nodes 192.168.0.50
 
 # Then prod cluster
 talosctl apply-config --insecure --nodes 10.0.2.10 --file controlplane.yaml
@@ -56,7 +56,7 @@ talosctl bootstrap --nodes 10.0.2.10
 # clusters/non-prod/infra/metallb/
 ├── namespace.yaml
 ├── metallb-system.yaml
-└── ipaddresspool.yaml (10.0.1.100-10.0.1.150)
+└── ipaddresspool.yaml (192.168.0.100-192.168.0.150)
 ```
 
 #### 2.3 Longhorn (Storage)
@@ -220,7 +220,7 @@ talosctl bootstrap --nodes 10.0.2.10
 - **Third disk (/dev/sdc)**: MinIO object storage
 
 ### Network Requirements
-- **Non-prod LoadBalancer range**: 10.0.1.100-10.0.1.150
+- **Non-prod LoadBalancer range**: 192.168.0.100-192.168.0.150
 - **Prod LoadBalancer range**: 10.0.2.100-10.0.2.150
 - **DNS integration**: Must point to internal DNS server
 - **Ingress domains**: 

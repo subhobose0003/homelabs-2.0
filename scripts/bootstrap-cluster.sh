@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# Bootstrap Talos Kubernetes Cluster Script
+# Bootstrap Talos Kubernetes Cluster Script (Dynamic Provisioning)
 # Usage: ./bootstrap-cluster.sh [non-prod|prod]
 
 set -e
@@ -9,6 +9,8 @@ ENVIRONMENT=${1:-non-prod}
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
 
+# --- Configuration ---
+
 # Color codes for output
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -16,137 +18,150 @@ YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
-log() {
-    echo -e "${BLUE}[$(date +'%Y-%m-%d %H:%M:%S')] $1${NC}"
-}
+# Network Configuration
+GATEWAY_IP="192.168.0.1"
+DNS_SERVERS=("192.168.0.5" "8.8.8.8")
+IP_CIDR="24"
 
-success() {
-    echo -e "${GREEN}[$(date +'%Y-%m-%d %H:%M:%S')] ✓ $1${NC}"
-}
-
-warning() {
-    echo -e "${YELLOW}[$(date +'%Y-%m-%d %H:%M:%S')] ⚠ $1${NC}"
-}
-
-error() {
-    echo -e "${RED}[$(date +'%Y-%m-%d %H:%M:%S')] ✗ $1${NC}"
-}
-
-# Validate environment
-if [[ "$ENVIRONMENT" != "non-prod" && "$ENVIRONMENT" != "prod" ]]; then
-    error "Invalid environment. Use 'non-prod' or 'prod'"
-    exit 1
-fi
-
-log "Bootstrapping $ENVIRONMENT cluster..."
-
-# Set environment-specific variables
-API_SERVER="https://$ENVIRONMENT-api.homelabs.in:6443"
+# Node definitions
+declare -A CONTROL_PLANE_MAP
+declare -A WORKER_MAP
 
 if [[ "$ENVIRONMENT" == "non-prod" ]]; then
     CLUSTER_NAME="homelab-nonprod"
-    CONTROL_PLANE_IP="10.0.1.10"
-    IP_RANGE="10.0.1.x"
+    API_SERVER="https://non-prod-api.local.homelabs.in:6443"
+    CONTROL_PLANE_IP="192.168.0.50"
+
+    # MAC -> "hostname;ip"
+    CONTROL_PLANE_MAP=( 
+        ["BC:24:11:B3:E3:BB"]="non-prod-controller-1;192.168.0.50" 
+        ["BC:24:11:B4:EC:89"]="non-prod-controller-2;192.168.0.51" 
+        ["BC:24:11:64:46:F5"]="non-prod-controller-3;192.168.0.52" 
+    )
+    WORKER_MAP=( 
+        ["BC:24:11:B5:5C:0E"]="non-prod-worker-1;192.168.0.53" 
+        ["BC:24:11:4C:E5:FA"]="non-prod-worker-2;192.168.0.54" 
+        ["BC:24:11:25:59:0E"]="non-prod-worker-3;192.168.0.55" 
+    )
 else
-    CLUSTER_NAME="homelab-prod"
-    CONTROL_PLANE_IP="10.0.2.10"
-    IP_RANGE="10.0.2.x"
-fi
-
-# Check if talosctl is installed
-if ! command -v talosctl &> /dev/null; then
-    error "talosctl is not installed. Please install it first."
+    # Add your production configuration here
+    error "Production environment configuration is not defined. Exiting."
     exit 1
 fi
 
-# Check if kubectl is installed
-if ! command -v kubectl &> /dev/null; then
-    error "kubectl is not installed. Please install it first."
-    exit 1
-fi
+# --- Helper Functions ---
+log() { echo -e "${BLUE}[$(date +'%Y-%m-%d %H:%M:%S')] $1${NC}"; }
+success() { echo -e "${GREEN}[$(date +'%Y-%m-%d %H:%M:%S')] ✓ $1${NC}"; }
+warning() { echo -e "${YELLOW}[$(date +'%Y-%m-%d %H:%M:%S')] ⚠ $1${NC}"; }
+error() { echo -e "${RED}[$(date +'%Y-%m-%d %H:%M:%S')] ✗ $1${NC}"; }
 
-# Create talos-config directory if it doesn't exist
-mkdir -p "$PROJECT_ROOT/clusters/$ENVIRONMENT/talos-config"
-cd "$PROJECT_ROOT/clusters/$ENVIRONMENT/talos-config"
+# --- Main Script ---
 
-# Generate Talos configuration if it doesn't exist
-if [[ ! -f "controlplane.yaml" ]]; then
-    log "Generating Talos configuration for $CLUSTER_NAME..."
+# Validate environment and tools
+if ! command -v talosctl &> /dev/null; then error "talosctl is not installed." && exit 1; fi
+if ! command -v kubectl &> /dev/null; then error "kubectl is not installed." && exit 1; fi
+if ! command -v jq &> /dev/null; then error "jq is not installed. It is required for parsing discovery data." && exit 1; fi
+
+log "Starting dynamic bootstrap for $ENVIRONMENT cluster..."
+
+CONFIG_DIR="$PROJECT_ROOT/clusters/$ENVIRONMENT/talos-config"
+mkdir -p "$CONFIG_DIR"
+cd "$CONFIG_DIR"
+
+# Generate base Talos configuration if it doesn't exist
+if [[ ! -f "controlplane.yaml" || ! -f "worker.yaml" ]]; then
+    log "Generating base Talos configuration for $CLUSTER_NAME..."
     talosctl gen config "$CLUSTER_NAME" "$API_SERVER"
-    success "Talos configuration generated"
+    success "Base configuration generated."
 else
-    warning "Talos configuration already exists, skipping generation"
+    warning "Base configuration already exists. Skipping generation."
 fi
 
-# Apply configuration to control plane nodes
-log "Applying configuration to control plane nodes..."
-# Note: Adjust IP addresses based on your actual node IPs
-CONTROL_PLANE_NODES=("$CONTROL_PLANE_IP" "10.0.${ENVIRONMENT == 'non-prod' ? '1' : '2'}.11" "10.0.${ENVIRONMENT == 'non-prod' ? '1' : '2'}.12")
+# Discover and provision nodes
+NODE_COUNT=$((${#CONTROL_PLANE_MAP[@]} + ${#WORKER_MAP[@]}))
+log "Ready to provision $NODE_COUNT nodes. Boot your VMs now."
+log "Starting node discovery..."
 
-for node in "${CONTROL_PLANE_NODES[@]}"; do
-    log "Applying config to control plane node: $node"
-    talosctl apply-config --insecure --nodes "$node" --file controlplane.yaml || {
-        warning "Failed to apply config to $node, continuing..."
+talosctl discover --nodes 127.0.0.1:50000 --timeout 10m | \
+while read -r line; do
+    NODE_IP=$(echo "$line" | jq -r .address)
+    MAC_ADDR=$(echo "$line" | jq -r .hardwareAddr | tr '[:lower:]' '[:upper:]')
+    INTERFACE=$(echo "$line" | jq -r .interfaces[0].name)
+
+    log "Discovered node at $NODE_IP with MAC $MAC_ADDR on interface $INTERFACE"
+
+    # Determine node type and get its config
+    if [[ -v "CONTROL_PLANE_MAP[$MAC_ADDR]" ]]; then
+        IFS=';' read -r HOSTNAME STATIC_IP <<< "${CONTROL_PLANE_MAP[$MAC_ADDR]}"
+        BASE_CONFIG="controlplane.yaml"
+        NODE_TYPE="Control Plane"
+    elif [[ -v "WORKER_MAP[$MAC_ADDR]" ]]; then
+        IFS=';' read -r HOSTNAME STATIC_IP <<< "${WORKER_MAP[$MAC_ADDR]}"
+        BASE_CONFIG="worker.yaml"
+        NODE_TYPE="Worker"
+    else
+        error "Discovered node with unknown MAC $MAC_ADDR. Skipping."
+        continue
+    fi
+
+    log "Identified as $NODE_TYPE node: $HOSTNAME ($STATIC_IP)"
+    GENERATED_CONFIG="${HOSTNAME}.yaml"
+
+    # Create network patch
+    NETWORK_PATCH=$(cat <<-EOF
+- op: replace
+  path: /machine/network
+  value:
+    interfaces:
+      - interface: ${INTERFACE}
+        dhcp: false
+        addresses:
+          - ${STATIC_IP}/${IP_CIDR}
+        routes:
+          - network: 0.0.0.0/0
+            gateway: ${GATEWAY_IP}
+    nameservers: [${DNS_SERVERS[0]}, ${DNS_SERVERS[1]}]
+EOF
+)
+
+    # Generate final config file
+    talosctl gen patch "$GENERATED_CONFIG" "$BASE_CONFIG" --patch "$NETWORK_PATCH" > /dev/null
+    success "Generated patched config: $GENERATED_CONFIG"
+
+    # Apply the configuration
+    log "Applying configuration to $HOSTNAME ($NODE_IP)..."
+    talosctl apply-config --insecure --nodes "$NODE_IP" --file "$GENERATED_CONFIG" || {
+        error "Failed to apply config to $HOSTNAME. Please check the node and retry."
+        continue
     }
+    success "Configuration applied to $HOSTNAME. The node will now reboot with its static IP."
+
 done
 
-# Bootstrap the cluster (only on the first control plane node)
-log "Bootstrapping cluster on $CONTROL_PLANE_IP..."
+warning "All discovered nodes have been configured and are rebooting."
+read -p "Please verify that all nodes are online with their static IPs, then press [Enter] to continue..."
+
+# Bootstrap the cluster
+log "Bootstrapping cluster on the first control plane node: $CONTROL_PLANE_IP..."
 talosctl bootstrap --nodes "$CONTROL_PLANE_IP" || {
-    error "Failed to bootstrap cluster"
+    error "Failed to bootstrap cluster."
     exit 1
 }
-
-# Wait for cluster to be ready
-log "Waiting for cluster to be ready..."
-sleep 30
 
 # Generate kubeconfig
 log "Generating kubeconfig..."
 talosctl kubeconfig --nodes "$CONTROL_PLANE_IP" || {
-    error "Failed to generate kubeconfig"
+    error "Failed to generate kubeconfig."
     exit 1
 }
 
-# Wait for nodes to be ready
-log "Waiting for nodes to be ready..."
-kubectl wait --for=condition=Ready nodes --all --timeout=300s || {
-    warning "Some nodes may not be ready yet"
+# Final verification
+log "Waiting for all nodes to become ready..."
+kubectl wait --for=condition=Ready nodes --all --timeout=5m || {
+    warning "Timed out waiting for all nodes to be ready. Check cluster status manually."
 }
 
-# Apply worker node configuration
-log "Applying configuration to worker nodes..."
-WORKER_NODES=("10.0.${ENVIRONMENT == 'non-prod' ? '1' : '2'}.20" "10.0.${ENVIRONMENT == 'non-prod' ? '1' : '2'}.21" "10.0.${ENVIRONMENT == 'non-prod' ? '1' : '2'}.22")
-
-for node in "${WORKER_NODES[@]}"; do
-    log "Applying config to worker node: $node"
-    talosctl apply-config --insecure --nodes "$node" --file worker.yaml || {
-        warning "Failed to apply config to $node, continuing..."
-    }
-done
-
-# Verify cluster status
 log "Verifying cluster status..."
 kubectl get nodes -o wide
-kubectl get pods -A
 
-success "Cluster $ENVIRONMENT bootstrapped successfully!"
-log "Cluster API: $API_SERVER"
-log "Control Plane IP: $CONTROL_PLANE_IP"
-log "IP Range: $IP_RANGE"
-
-# Save cluster info
-cat > cluster-info.txt << EOF
-Cluster: $CLUSTER_NAME
-Environment: $ENVIRONMENT
-API Server: $API_SERVER
-Control Plane IP: $CONTROL_PLANE_IP
-IP Range: $IP_RANGE
-Bootstrap Date: $(date)
-EOF
-
-success "Cluster information saved to cluster-info.txt"
-log "Next steps:"
-echo "  1. Deploy infrastructure stack: kubectl apply -k ../infra/"
-echo "  2. Set up ArgoCD: kubectl apply -f ../infra/gitops/"
-echo "  3. Configure DNS records for *.${ENVIRONMENT}.internal"
+success "Cluster '$ENVIRONMENT' bootstrapped successfully!"

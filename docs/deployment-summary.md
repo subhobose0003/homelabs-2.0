@@ -28,7 +28,7 @@ homelabs/
    - RFC2136 provider configuration for dynamic DNS updates
 
 2. **MetalLB** - LoadBalancer services for bare-metal
-   - IP address pools: 10.0.1.100-150 (non-prod), 10.0.2.100-150 (prod)
+   - IP address pools: 192.168.0.100-150 (non-prod), 10.0.2.100-150 (prod)
    - L2 advertisement configuration
 
 3. **Longhorn** - Distributed block storage

@@ -4,7 +4,7 @@ A complete GitOps-driven Kubernetes infrastructure using Talos Linux with automa
 
 ## Architecture Overview
 
-- **Non-Prod Cluster**: 3 master + 3 worker nodes (IP range: 10.0.1.x)
+- **Non-Prod Cluster**: 3 master + 3 worker nodes (IP range: 192.168.0.x)
 - **Prod Cluster**: 3 master + 3 worker nodes (IP range: 10.0.2.x)
 - **GitOps Workflow**: Feature branches → Dev → Production with automated environments
 
