@@ -1,0 +1,15 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: traefik-acme-storage
+  namespace: traefik-system
+  labels:
+    app.kubernetes.io/name: traefik
+    app.kubernetes.io/component: infrastructure
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: longhorn-v2
+  resources:
+    requests:
+      storage: 1Gi

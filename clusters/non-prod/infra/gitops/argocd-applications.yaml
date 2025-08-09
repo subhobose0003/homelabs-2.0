@@ -1,0 +1,75 @@
+# ArgoCD Application for Infrastructure Components
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: infra-stack
+  namespace: argocd
+  labels:
+    app.kubernetes.io/name: infra-stack
+    app.kubernetes.io/component: infrastructure
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/your-username/homelabs  # Replace with your repo
+    targetRevision: main
+    path: clusters/non-prod/infra
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: default
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+    - CreateNamespace=true
+    - PrunePropagationPolicy=foreground
+    - PruneLast=true
+  revisionHistoryLimit: 10
+---
+# ArgoCD Application for User Applications
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: user-apps
+  namespace: argocd
+  labels:
+    app.kubernetes.io/name: user-apps
+    app.kubernetes.io/component: applications
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/your-username/homelabs  # Replace with your repo
+    targetRevision: dev
+    path: clusters/non-prod/apps
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: default
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+    - CreateNamespace=true
+    - PrunePropagationPolicy=foreground
+    - PruneLast=true
+  revisionHistoryLimit: 10
+---
+# ArgoCD AppProject for better organization
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: homelab
+  namespace: argocd
+spec:
+  description: Homelab GitOps Project
+  sourceRepos:
+  - 'https://github.com/your-username/homelabs'  # Replace with your repo
+  destinations:
+  - namespace: '*'
+    server: https://kubernetes.default.svc
+  clusterResourceWhitelist:
+  - group: '*'
+    kind: '*'
+  namespaceResourceWhitelist:
+  - group: '*'
+    kind: '*'

@@ -1,0 +1,48 @@
+# ArgoCD Installation
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: argocd-install
+  namespace: argocd
+data:
+  install.sh: |
+    #!/bin/bash
+    # Install ArgoCD
+    kubectl apply -n argocd -f https://raw.githubusercontent.com/argoproj/argo-cd/stable/manifests/install.yaml
+    
+    # Wait for ArgoCD to be ready
+    kubectl -n argocd rollout status deployment/argocd-server
+    kubectl -n argocd rollout status deployment/argocd-repo-server
+    kubectl -n argocd rollout status deployment/argocd-dex-server
+    
+    echo "ArgoCD installation completed"
+---
+# ArgoCD Configuration
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: argocd-cm
+  namespace: argocd
+  labels:
+    app.kubernetes.io/name: argocd-cm
+    app.kubernetes.io/part-of: argocd
+data:
+  # Repository configuration
+  repositories: |
+    - type: git
+      url: https://github.com/your-username/homelabs
+      name: homelabs
+  
+  # OIDC configuration (optional)
+  # oidc.config: |
+  #   name: OIDC
+  #   issuer: https://your-oidc-provider
+  #   clientId: argocd
+  #   clientSecret: $oidc.clientSecret
+  #   requestedScopes: ["openid", "profile", "email", "groups"]
+  
+  # URL configuration
+  url: https://argocd.nonprod.internal
+  
+  # Application in any namespace
+  application.instanceLabelKey: argocd.argoproj.io/instance

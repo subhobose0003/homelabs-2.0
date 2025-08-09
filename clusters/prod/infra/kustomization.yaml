@@ -1,0 +1,34 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+metadata:
+  name: prod-infrastructure
+  annotations:
+    config.kubernetes.io/local-config: "true"
+
+# Base infrastructure from non-prod
+bases:
+  - ../../non-prod/infra
+
+# Production-specific patches
+patchesStrategicMerge:
+  - metallb-prod-patch.yaml
+  - traefik-prod-patch.yaml
+  - vault-prod-patch.yaml
+
+# Common labels for all resources
+commonLabels:
+  environment: prod
+  managed-by: gitops
+  cluster: homelab-prod
+
+# Production-specific configurations
+configMapGenerator:
+  - name: prod-config
+    literals:
+      - domain=prod.internal
+      - ip_range=10.0.2.x
+      - replica_count=3
+
+# Namespace for resources that don't specify one
+namespace: default

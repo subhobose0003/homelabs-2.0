@@ -1,0 +1,32 @@
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: longhorn-v2
+  annotations:
+    storageclass.kubernetes.io/is-default-class: "true"
+  labels:
+    app.kubernetes.io/name: longhorn
+    app.kubernetes.io/component: infrastructure
+provisioner: driver.longhorn.io
+allowVolumeExpansion: true
+reclaimPolicy: Delete
+volumeBindingMode: Immediate
+parameters:
+  numberOfReplicas: "3"
+  staleReplicaTimeout: "2880"  # 48 hours
+  fromBackup: ""
+  fsType: "ext4"
+  dataLocality: "disabled"
+  replicaAutoBalance: "ignored"
+---
+# Remove default annotation from any existing storage classes
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: remove-default-storageclass
+  namespace: longhorn-system
+data:
+  remove-default.sh: |
+    #!/bin/bash
+    # Remove default annotation from existing storage classes
+    kubectl get storageclass -o name | xargs -I {} kubectl annotate {} storageclass.kubernetes.io/is-default-class-

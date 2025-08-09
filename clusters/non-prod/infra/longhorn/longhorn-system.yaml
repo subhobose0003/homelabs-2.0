@@ -1,0 +1,34 @@
+# Longhorn Installation
+# This installs Longhorn using the official manifests
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: longhorn-install
+  namespace: longhorn-system
+data:
+  install.sh: |
+    #!/bin/bash
+    # Install Longhorn
+    kubectl apply -f https://raw.githubusercontent.com/longhorn/longhorn/v1.5.3/deploy/longhorn.yaml
+    
+    # Wait for Longhorn to be ready
+    kubectl -n longhorn-system rollout status deployment/longhorn-ui
+    kubectl -n longhorn-system rollout status daemonset/longhorn-manager
+    
+    echo "Longhorn installation completed"
+---
+# Longhorn Settings ConfigMap
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: longhorn-default-setting
+  namespace: longhorn-system
+data:
+  default-data-path: "/var/lib/longhorn/"
+  replica-soft-anti-affinity: "true"
+  storage-over-provisioning-percentage: "200"
+  storage-minimal-available-percentage: "25"
+  upgrade-checker: "false"
+  default-replica-count: "3"
+  guaranteed-engine-manager-cpu: "12"
+  guaranteed-replica-manager-cpu: "12"

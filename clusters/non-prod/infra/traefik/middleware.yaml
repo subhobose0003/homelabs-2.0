@@ -1,0 +1,91 @@
+apiVersion: traefik.containo.us/v1alpha1
+kind: Middleware
+metadata:
+  name: default-headers
+  namespace: traefik-system
+spec:
+  headers:
+    browserXssFilter: true
+    contentTypeNosniff: true
+    forceSTSHeader: true
+    stsIncludeSubdomains: true
+    stsPreload: true
+    stsSeconds: 31536000
+    customFrameOptionsValue: SAMEORIGIN
+    customRequestHeaders:
+      X-Forwarded-Proto: "https"
+---
+apiVersion: traefik.containo.us/v1alpha1
+kind: Middleware
+metadata:
+  name: secure-headers
+  namespace: traefik-system
+spec:
+  headers:
+    accessControlAllowMethods:
+      - GET
+      - OPTIONS
+      - PUT
+    accessControlMaxAge: 100
+    hostsProxyHeaders:
+      - "X-Forwarded-Host"
+    referrerPolicy: "same-origin"
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: traefik-dashboard
+  namespace: traefik-system
+  annotations:
+    traefik.ingress.kubernetes.io/router.entrypoints: websecure
+    traefik.ingress.kubernetes.io/router.tls: "true"
+    traefik.ingress.kubernetes.io/router.tls.certresolver: letsencrypt
+    traefik.ingress.kubernetes.io/router.middlewares: traefik-system-dashboard-auth@kubernetescrd
+spec:
+  tls:
+  - hosts:
+    - traefik.nonprod.internal
+    secretName: traefik-dashboard-tls
+  rules:
+  - host: traefik.nonprod.internal
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: traefik-dashboard
+            port:
+              number: 8080
+---
+apiVersion: traefik.containo.us/v1alpha1
+kind: Middleware
+metadata:
+  name: dashboard-auth
+  namespace: traefik-system
+spec:
+  basicAuth:
+    secret: traefik-dashboard-auth
+---
+# Temporary basic auth secret (will be managed by Vault later)
+apiVersion: v1
+kind: Secret
+metadata:
+  name: traefik-dashboard-auth
+  namespace: traefik-system
+type: Opaque
+data:
+  # admin:admin (change this!)
+  users: YWRtaW46JGFwcjEkSDY1dnVhNDYkLjFkVzNJSC5QWGVzV2xQcUcuRzgwLgo=
+---
+# Cloudflare credentials secret (replace with actual values)
+apiVersion: v1
+kind: Secret
+metadata:
+  name: cloudflare-credentials
+  namespace: traefik-system
+type: Opaque
+data:
+  # Replace with your actual Cloudflare credentials (base64 encoded)
+  email: "REPLACE_WITH_BASE64_ENCODED_EMAIL"
+  api-token: "REPLACE_WITH_BASE64_ENCODED_API_TOKEN"

@@ -1,0 +1,59 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+metadata:
+  name: non-prod-infrastructure
+  annotations:
+    config.kubernetes.io/local-config: "true"
+
+# Infrastructure components in deployment order
+resources:
+  - external-dns/namespace.yaml
+  - external-dns/rbac.yaml
+  - external-dns/secret.yaml
+  - external-dns/external-dns-deployment.yaml
+  
+  - metallb/namespace.yaml
+  - metallb/metallb-system.yaml
+  - metallb/ipaddresspool.yaml
+  
+  - longhorn/namespace.yaml
+  - longhorn/longhorn-system.yaml
+  - longhorn/storageclass-v2.yaml
+  - longhorn/ingress.yaml
+  
+  - traefik/namespace.yaml
+  - traefik/traefik-pvc.yaml
+  - traefik/traefik-config.yaml
+  - traefik/traefik-deployment.yaml
+  - traefik/traefik-service.yaml
+  - traefik/middleware.yaml
+  
+  - minio/namespace.yaml
+  - minio/minio-pvc.yaml
+  - minio/minio-deployment.yaml
+  - minio/minio-service.yaml
+  - minio/minio-ingress.yaml
+  
+  - vault/namespace.yaml
+  - vault/vault-pvc.yaml
+  - vault/vault-config.yaml
+  - vault/vault-rbac.yaml
+  - vault/vault-deployment.yaml
+  - vault/vault-service.yaml
+  - vault/vault-ingress.yaml
+  - vault/external-secrets-operator.yaml
+  
+  - gitops/namespace.yaml
+  - gitops/argocd-install.yaml
+  - gitops/argocd-ingress.yaml
+  - gitops/argocd-applications.yaml
+
+# Common labels for all resources
+commonLabels:
+  environment: non-prod
+  managed-by: gitops
+  cluster: homelab-nonprod
+
+# Namespace for resources that don't specify one
+namespace: default

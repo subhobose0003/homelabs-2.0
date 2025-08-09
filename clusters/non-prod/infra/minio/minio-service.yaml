@@ -1,0 +1,37 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: minio-api
+  namespace: minio
+  labels:
+    app.kubernetes.io/name: minio
+    app.kubernetes.io/component: infrastructure
+  annotations:
+    external-dns.alpha.kubernetes.io/hostname: minio-api.nonprod.internal
+spec:
+  type: LoadBalancer
+  ports:
+    - port: 9000
+      targetPort: api
+      protocol: TCP
+      name: api
+  selector:
+    app.kubernetes.io/name: minio
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: minio-console
+  namespace: minio
+  labels:
+    app.kubernetes.io/name: minio
+    app.kubernetes.io/component: infrastructure
+spec:
+  type: ClusterIP
+  ports:
+    - port: 9001
+      targetPort: console
+      protocol: TCP
+      name: console
+  selector:
+    app.kubernetes.io/name: minio

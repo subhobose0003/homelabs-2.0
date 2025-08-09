@@ -1,0 +1,15 @@
+# MetalLB Installation
+# This installs MetalLB using the official manifests
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: metallb-install
+  namespace: metallb-system
+data:
+  install.sh: |
+    #!/bin/bash
+    kubectl apply -f https://raw.githubusercontent.com/metallb/metallb/v0.13.12/config/manifests/metallb-native.yaml
+---
+# Alternative: Direct installation (uncomment if needed)
+# You can also apply the MetalLB manifests directly here
+# For now, we'll use the upstream manifests via the install script above
