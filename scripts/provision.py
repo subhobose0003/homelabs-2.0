@@ -85,26 +85,9 @@ def main():
                         continue
 
                     # Step 2: Get MAC address for the affiliate
-                    links_cmd = ['talosctl', 'get', 'links', '-e', node_ip, '-n', node_ip, '-i', '-o', 'json']
-                    links_result = subprocess.run(links_cmd, capture_output=True, text=True)
-                    
-                    if links_result.returncode != 0:
-                        continue
-
-                    links = json.loads(links_result.stdout)
-                    for link in links:
-                        mac_addr = link.get('spec', {}).get('hardwareAddr', '').upper()
-                        if mac_addr in nodes_map and mac_addr not in discovered_nodes_dict:
-                            hostname = nodes_map[mac_addr]['hostname']
-                            log(f"Discovered known node: {hostname} ({mac_addr}) at IP {node_ip}")
-                            node_data = {
-                                'address': node_ip,
-                                'hardwareAddr': mac_addr,
-                                'interfaces': [{'name': link.get('spec', {}).get('linkName')}],
-                                'config': nodes_map[mac_addr]
-                            }
-                            discovered_nodes_dict[mac_addr] = node_data
-                            break
+                    node_details = get_node_details(node_ip, nodes_map)
+                    if node_details and node_details['hardwareAddr'] not in discovered_nodes_dict:
+                        discovered_nodes_dict[node_details['hardwareAddr']] = node_details
 
             except (json.JSONDecodeError, FileNotFoundError):
                 pass # Suppress errors
@@ -112,6 +95,35 @@ def main():
             stop_event.wait(5) # Poll every 5 seconds
 
     import time
+    # Process the initial node first, then start discovery for others.
+    # This is done in the main thread before starting the discovery loop.
+    def get_node_details(node_ip, nodes_map):
+        try:
+            links_cmd = ['talosctl', 'get', 'links', '-e', node_ip, '-n', node_ip, '-i', '-o', 'json']
+            links_result = subprocess.run(links_cmd, capture_output=True, text=True)
+            if links_result.returncode != 0 or not links_result.stdout.strip():
+                return None
+
+            links = json.loads(links_result.stdout)
+            for link in links:
+                mac_addr = link.get('spec', {}).get('hardwareAddr', '').upper()
+                if mac_addr in nodes_map:
+                    hostname = nodes_map[mac_addr]['hostname']
+                    log(f"Discovered known node: {hostname} ({mac_addr}) at IP {node_ip}")
+                    return {
+                        'address': node_ip,
+                        'hardwareAddr': mac_addr,
+                        'interfaces': [{'name': link.get('spec', {}).get('linkName')}],
+                        'config': nodes_map[mac_addr]
+                    }
+        except (json.JSONDecodeError, FileNotFoundError):
+            return None
+        return None
+
+    initial_node_details = get_node_details(initial_ip, nodes_map)
+    if initial_node_details:
+        discovered_nodes[initial_node_details['hardwareAddr']] = initial_node_details
+
     discovery_thread = threading.Thread(target=discover_and_map_nodes, args=(initial_ip, discovered_nodes, nodes_map, stop_discovery))
     discovery_thread.daemon = True
     discovery_thread.start()
