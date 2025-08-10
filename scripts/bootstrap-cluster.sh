@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 
 # Bootstrap Talos Kubernetes Cluster Script (Dynamic Provisioning)
 # Usage: ./bootstrap-cluster.sh [non-prod|prod]
