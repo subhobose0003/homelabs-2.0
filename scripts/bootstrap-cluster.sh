@@ -111,6 +111,10 @@ while read -r line; do
 - op: add
   path: /machine/time/servers
   value: [${NTP_SERVERS[0]}, ${NTP_SERVERS[1]}]
+- op: add
+  path: /machine/install/diskSelector
+  value:
+    size: "< 50GB"
 EOF
 )
 
