@@ -73,8 +73,13 @@ def main():
                 affiliates_cmd = ['talosctl', 'get', 'affiliates', '-e', initial_node_ip, '-n', initial_node_ip, '-i', '-o', 'json']
                 result = subprocess.run(affiliates_cmd, capture_output=True, text=True, check=False)
 
-                if result.returncode != 0 or not result.stdout.strip():
-                    time.sleep(5) # Wait and retry if initial node is not ready or output is empty
+                if result.returncode != 0:
+                    warning(f"affiliates command failed (rc={result.returncode}): {result.stderr.strip()}")
+                    time.sleep(5)
+                    continue
+                if not result.stdout.strip():
+                    warning("affiliates returned empty output; waiting for peers...")
+                    time.sleep(5)
                     continue
 
                 affiliates = json.loads(result.stdout)
@@ -101,19 +106,25 @@ def main():
         try:
             links_cmd = ['talosctl', 'get', 'links', '-e', node_ip, '-n', node_ip, '-i', '-o', 'json']
             links_result = subprocess.run(links_cmd, capture_output=True, text=True)
-            if links_result.returncode != 0 or not links_result.stdout.strip():
+            if links_result.returncode != 0:
+                warning(f"links command failed for {node_ip} (rc={links_result.returncode}): {links_result.stderr.strip()}")
+                return None
+            if not links_result.stdout.strip():
+                warning(f"links returned empty output for {node_ip}")
                 return None
 
             links = json.loads(links_result.stdout)
             for link in links:
-                mac_addr = link.get('spec', {}).get('hardwareAddr', '').upper()
-                if mac_addr in nodes_map:
+                spec = link.get('spec', {})
+                mac_addr = spec.get('hardwareAddr', '').upper()
+                iface_name = spec.get('name') or spec.get('linkName')
+                if mac_addr in nodes_map and iface_name:
                     hostname = nodes_map[mac_addr]['hostname']
                     log(f"Discovered known node: {hostname} ({mac_addr}) at IP {node_ip}")
                     return {
                         'address': node_ip,
                         'hardwareAddr': mac_addr,
-                        'interfaces': [{'name': link.get('spec', {}).get('linkName')}],
+                        'interfaces': [{'name': iface_name}],
                         'config': nodes_map[mac_addr]
                     }
         except (json.JSONDecodeError, FileNotFoundError):

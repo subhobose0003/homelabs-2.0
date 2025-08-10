@@ -49,6 +49,9 @@ CONFIG_DIR="$PROJECT_ROOT/clusters/$ENVIRONMENT/talos-config"
 mkdir -p "$CONFIG_DIR"
 cd "$CONFIG_DIR"
 
+# Ensure talosctl uses the generated config in this directory
+export TALOSCONFIG="$CONFIG_DIR/talosconfig"
+
 # Generate base Talos configuration if it doesn't exist
 if [[ ! -f "controlplane.yaml" || ! -f "worker.yaml" ]]; then
     log "Generating base Talos configuration for $CLUSTER_NAME..."
