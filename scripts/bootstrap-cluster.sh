@@ -77,12 +77,16 @@ else
     warning "Base configuration already exists. Skipping generation."
 fi
 
+info "Base configuration is ready."
+read -p "Press [Enter] to begin node discovery..."
+
 # Discover and provision nodes
 NODE_COUNT=$((${#CONTROL_PLANE_MAP[@]} + ${#WORKER_MAP[@]}))
+PROVISIONED_COUNT=0
 log "Ready to provision $NODE_COUNT nodes. Boot your VMs now."
 log "Starting node discovery..."
 
-talosctl discover --nodes 127.0.0.1:50000 --timeout 10m | \
+talosctl discover --nodes 127.0.0.1:50000 | \
 while read -r line; do
     NODE_IP=$(echo "$line" | jq -r .address)
     MAC_ADDR=$(echo "$line" | jq -r .hardwareAddr | tr '[:lower:]' '[:upper:]')
@@ -134,12 +138,19 @@ EOF
 
     # Apply the configuration
     log "Applying configuration to $HOSTNAME ($NODE_IP)..."
-    talosctl apply-config --insecure --nodes "$NODE_IP" --file "$GENERATED_CONFIG" || {
-        error "Failed to apply config to $HOSTNAME. Please check the node and retry."
-        continue
-    }
-    success "Configuration applied to $HOSTNAME. The node will now reboot with its static IP."
+    if talosctl apply-config --insecure --nodes "$NODE_IP" --file "$GENERATED_CONFIG"; then
+        success "Applied config to $HOSTNAME. Node will reboot with static IP $STATIC_IP."
+        rm "$GENERATED_CONFIG"
 
+        # Increment counter and check if all nodes are provisioned
+        PROVISIONED_COUNT=$((PROVISIONED_COUNT + 1))
+        if (( PROVISIONED_COUNT == NODE_COUNT )); then
+            success "All $NODE_COUNT nodes have been provisioned."
+            break
+        fi
+    else
+        error "Failed to apply config to $HOSTNAME ($NODE_IP). Please check the node and retry."
+    fi
 done
 
 warning "All discovered nodes have been configured and are rebooting."
@@ -152,12 +163,35 @@ talosctl bootstrap --nodes "$CONTROL_PLANE_IP" || {
     exit 1
 }
 
-# Generate kubeconfig
+success "Bootstrap command issued to $CONTROL_PLANE_IP."
+
 log "Generating kubeconfig..."
 talosctl kubeconfig --nodes "$CONTROL_PLANE_IP" || {
     error "Failed to generate kubeconfig."
     exit 1
 }
+success "Kubeconfig generated."
+
+# Join other control plane nodes
+log "Joining other control plane nodes to the cluster..."
+for mac in "${!CONTROL_PLANE_MAP[@]}"; do
+    IFS=';' read -r _hostname static_ip <<< "${CONTROL_PLANE_MAP[$mac]}"
+    if [[ "$static_ip" != "$CONTROL_PLANE_IP" ]]; then
+        log "Joining control plane node $static_ip..."
+        talosctl --nodes "$static_ip" join --endpoints "$CONTROL_PLANE_IP" || error "Failed to join control plane node $static_ip."
+    fi
+done
+
+# Join worker nodes
+log "Joining worker nodes to the cluster..."
+for mac in "${!WORKER_MAP[@]}"; do
+    IFS=';' read -r _hostname static_ip <<< "${WORKER_MAP[$mac]}"
+    log "Joining worker node $static_ip..."
+    talosctl --nodes "$static_ip" join --endpoints "$CONTROL_PLANE_IP" || error "Failed to join worker node $static_ip."
+done
+
+info "All nodes have been instructed to join the cluster."
+read -p "Press [Enter] to wait for all nodes to become ready..."
 
 # Final verification
 log "Waiting for all nodes to become ready..."
