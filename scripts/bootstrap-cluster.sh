@@ -143,7 +143,7 @@ else
   else
     # Try to see if control plane is effectively up by fetching kubeconfig
     warning "Bootstrap returned non-zero. Probing API by attempting kubeconfig fetch..."
-    if talosctl --talosconfig "$CONFIG_DIR/talosconfig" kubeconfig --nodes "$BOOTSTRAP_IP" --endpoints "$BOOTSTRAP_IP" \
+    if talosctl --talosconfig "$CONFIG_DIR/talosconfig" kubeconfig "$CONFIG_DIR/kubeconfig" --nodes "$BOOTSTRAP_IP" --endpoints "$BOOTSTRAP_IP" --force \
       >/dev/null 2>&1; then
       success "Kubeconfig fetch succeeded; assuming cluster is already bootstrapped."
     else
@@ -181,12 +181,12 @@ echo "Expected nodes (from config/provisioned list) should appear after control 
 read -p "Press [Enter] once ALL nodes have joined the cluster successfully (you may verify via node consoles or talosctl)." 
 
 # Generate kubeconfig at the end
-log "Generating kubeconfig..."
-talosctl --talosconfig "$CONFIG_DIR/talosconfig" kubeconfig --nodes "$BOOTSTRAP_IP" --endpoints "$BOOTSTRAP_IP" || {
+log "Generating kubeconfig at $CONFIG_DIR/kubeconfig..."
+talosctl --talosconfig "$CONFIG_DIR/talosconfig" kubeconfig "$CONFIG_DIR/kubeconfig" --nodes "$BOOTSTRAP_IP" --endpoints "$BOOTSTRAP_IP" --force || {
     error "Failed to generate kubeconfig."
     exit 1
 }
-success "Kubeconfig generated."
+success "Kubeconfig written to $CONFIG_DIR/kubeconfig."
 export KUBECONFIG="$CONFIG_DIR/kubeconfig"
 
 # Automated check: wait for all expected nodes to register in Kubernetes
