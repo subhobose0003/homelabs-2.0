@@ -208,6 +208,14 @@ def main():
                 config_patch.append({'op': 'add', 'path': '/machine/install', 'value': {'diskSelector': {'size': '< 50GB'}}})
 
             patch_str = json.dumps(config_patch)
+            # Persist patch for auditing/debugging (YAML extension, JSON content is valid YAML)
+            patch_filename = f"{hostname}-network-patch.yaml"
+            try:
+                with open(os.path.join(config_dir, patch_filename), 'w') as pf:
+                    pf.write(patch_str + "\n")
+                log(f"Wrote network patch for {hostname} to {os.path.join(config_dir, patch_filename)}")
+            except Exception as e:
+                warning(f"Failed to write patch file for {hostname}: {e}")
             # Apply base config plus per-node patch directly; no per-node secrets or files
             apply_result = subprocess.run([
                 'talosctl', 'apply-config', '--insecure',
@@ -249,14 +257,21 @@ def main():
     except ValueError:
         DEFAULT_INTERVAL = 5
 
+    # Use explicit talosconfig like the manual command to avoid env reliance
+    talosconfig_path = os.path.join(config_dir, 'talosconfig')
+
     def wait_node_ready(ip: str, total_timeout: int = DEFAULT_TIMEOUT, interval: int = DEFAULT_INTERVAL) -> bool:
         start = time.time()
         spinner = ['|', '/', '-', '\\']
         idx = 0
         while time.time() - start < total_timeout:
-            # Stronger readiness: ensure machineconfig is retrievable via Talos API
-            rc = subprocess.run(['talosctl', 'get', 'machineconfig', '-e', ip, '-n', ip, '-i', '-o', 'json'], capture_output=True, text=True)
+            # Try secure API first (post-install) using explicit talosconfig
+            rc = subprocess.run(['talosctl', '--talosconfig', talosconfig_path, 'get', 'machineconfig', '-e', ip, '-n', ip, '-o', 'json'], capture_output=True, text=True)
             if rc.returncode == 0 and rc.stdout.strip():
+                return True
+            # Fallback to insecure maintenance mode (some nodes may still be in maintenance transiently)
+            rc2 = subprocess.run(['talosctl', '--talosconfig', talosconfig_path, 'get', 'machineconfig', '-e', ip, '-n', ip, '-i', '-o', 'json'], capture_output=True, text=True)
+            if rc2.returncode == 0 and rc2.stdout.strip():
                 return True
             # spinner tick
             print(f"\r  waiting {int(total_timeout - (time.time()-start))}s {spinner[idx%4]}", end='', flush=True)

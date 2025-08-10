@@ -16,6 +16,12 @@ success() { echo -e "\033[0;32m[$(date +'%Y-%m-%d %H:%M:%S')] ✓ $1\033[0m"; }
 warning() { echo -e "\033[1;33m[$(date +'%Y-%m-%d %H:%M:%S')] ⚠ $1\033[0m"; }
 error() { echo -e "\033[0;31m[$(date +'%Y-%m-%d %H:%M:%S')] ✗ $1\033[0m"; }
 
+# Debug mode (export DEBUG=1 to enable)
+if [[ -n "$DEBUG" ]]; then
+  set -x
+  export TALOS_LOG_LEVEL=debug
+fi
+
 
 
 # --- Main Script ---
@@ -62,18 +68,40 @@ else
 fi
 
 log "Handing off to Python script for node discovery and provisioning..."
-python3 "$SCRIPT_DIR/provision.py" "$ENVIRONMENT"
 
-warning "All discovered nodes have been configured and are rebooting."
-read -p "Please verify that all nodes are online with their static IPs, then press [Enter] to continue..."
+# Auto-detect previously provisioned nodes and offer to reuse
+REUSE=false
+if [[ -f "$CONFIG_DIR/provisioned_nodes.json" ]]; then
+    EXISTING_ALL=( $(jq -r '.nodes[].ip_address' "$CONFIG_DIR/provisioned_nodes.json") )
+    READY_COUNT=0
+    for ip in "${EXISTING_ALL[@]}"; do
+        if talosctl --talosconfig "$CONFIG_DIR/talosconfig" get machineconfig -e "$ip" -n "$ip" -o json >/dev/null 2>&1; then
+            READY_COUNT=$((READY_COUNT+1))
+        fi
+    done
+    if [[ $READY_COUNT -gt 0 ]]; then
+        read -r -p "Detected $READY_COUNT previously provisioned node(s). Reuse and skip provisioning? [Y/n]: " ans
+        if [[ -z "$ans" || "$ans" =~ ^[Yy]$ ]]; then
+            REUSE=true
+            success "Reusing previously provisioned nodes; skipping provisioning step."
+        fi
+    fi
+fi
+
+if [[ "$REUSE" != "true" ]]; then
+    python3 "$SCRIPT_DIR/provision.py" "$ENVIRONMENT"
+    warning "All discovered nodes have been configured and are rebooting."
+    read -p "Please verify that all nodes are online with their static IPs, then press [Enter] to continue..."
+fi
 
 # If available, restrict joins to provisioned nodes from this run
 PROVISIONED_FILE="$CONFIG_DIR/provisioned_nodes.json"
 PROV_CONTROL_PLANES=()
 PROV_WORKERS=()
 if [[ -f "$PROVISIONED_FILE" ]]; then
-    mapfile -t PROV_CONTROL_PLANES < <(jq -r '.nodes[] | select(.type=="control-plane") | .ip_address' "$PROVISIONED_FILE")
-    mapfile -t PROV_WORKERS < <(jq -r '.nodes[] | select(.type=="worker") | .ip_address' "$PROVISIONED_FILE")
+    # macOS ships Bash 3.2 which lacks 'mapfile'. Use jq + command substitution instead.
+    PROV_CONTROL_PLANES=( $(jq -r '.nodes[] | select(.type=="control-plane") | .ip_address' "$PROVISIONED_FILE") )
+    PROV_WORKERS=( $(jq -r '.nodes[] | select(.type=="worker") | .ip_address' "$PROVISIONED_FILE") )
 fi
 
 # Determine bootstrap control-plane IP dynamically if needed
@@ -92,65 +120,84 @@ if [[ ${#PROV_CONTROL_PLANES[@]} -gt 0 ]]; then
 fi
 
 # Bootstrap the cluster
+log "Setting talosctl endpoints to $BOOTSTRAP_IP..."
+if talosctl --talosconfig "$CONFIG_DIR/talosconfig" config endpoints "$BOOTSTRAP_IP" >/dev/null 2>&1; then
+  success "Endpoints set in talosconfig."
+else
+  warning "Failed to set endpoints; continuing with explicit --endpoints."
+fi
+ 
 log "Bootstrapping cluster on control plane node: $BOOTSTRAP_IP..."
-talosctl bootstrap --nodes "$BOOTSTRAP_IP" || {
-    error "Failed to bootstrap cluster."
-    exit 1
-}
+BOOTSTRAP_TMP_LOG=$(mktemp -t talos-bootstrap.XXXXXX)
+if talosctl --talosconfig "$CONFIG_DIR/talosconfig" bootstrap --nodes "$BOOTSTRAP_IP" --endpoints "$BOOTSTRAP_IP" \
+  >"$BOOTSTRAP_TMP_LOG" 2>&1; then
+  BOOTSTRAP_OUT=$(cat "$BOOTSTRAP_TMP_LOG")
+  success "Bootstrap command issued to $BOOTSTRAP_IP."
+  if [[ -n "$BOOTSTRAP_OUT" ]]; then
+    log "Bootstrap output:\n$BOOTSTRAP_OUT"
+  fi
+else
+  BOOTSTRAP_OUT=$(cat "$BOOTSTRAP_TMP_LOG")
+  if echo "$BOOTSTRAP_OUT" | grep -Eqi "already bootstrapped|bootstrap( is)? already (completed|done)"; then
+    warning "Cluster already bootstrapped; continuing."
+  else
+    # Try to see if control plane is effectively up by fetching kubeconfig
+    warning "Bootstrap returned non-zero. Probing API by attempting kubeconfig fetch..."
+    if talosctl --talosconfig "$CONFIG_DIR/talosconfig" kubeconfig --nodes "$BOOTSTRAP_IP" --endpoints "$BOOTSTRAP_IP" \
+      >/dev/null 2>&1; then
+      success "Kubeconfig fetch succeeded; assuming cluster is already bootstrapped."
+    else
+      error "Failed to bootstrap cluster. Output:\n$BOOTSTRAP_OUT"
+      rm -f "$BOOTSTRAP_TMP_LOG"
+      exit 1
+    fi
+  fi
+fi
+rm -f "$BOOTSTRAP_TMP_LOG"
 
-success "Bootstrap command issued to $BOOTSTRAP_IP."
+# Wait for bootstrap node Talos API to be reachable and prompt for confirmation
+WAIT_INTERVAL=${WAIT_INTERVAL:-5}
+WAIT_TIMEOUT=${WAIT_TIMEOUT:-900}
+log "Waiting for bootstrap node ($BOOTSTRAP_IP) Talos API to become reachable..."
+start_ts=$(date +%s)
+while true; do
+  if talosctl --talosconfig "$CONFIG_DIR/talosconfig" get machineconfig -e "$BOOTSTRAP_IP" -n "$BOOTSTRAP_IP" -o json >/dev/null 2>&1; then
+    success "Bootstrap node Talos API is reachable."
+    break
+  fi
+  now=$(date +%s)
+  if [[ $((now - start_ts)) -ge $WAIT_TIMEOUT ]]; then
+    warning "Timed out waiting for bootstrap node Talos API."
+    break
+  fi
+  sleep "$WAIT_INTERVAL"
+done
+read -p "Confirm control plane node $BOOTSTRAP_IP is Ready (kube-apiserver running). Press [Enter] to continue..."
 
+# As per Talos docs, no explicit join command is needed. Allow time for nodes to auto-join.
+echo
+log "Nodes will auto-join once their configs are applied."
+echo "Expected nodes (from config/provisioned list) should appear after control plane is up."
+read -p "Press [Enter] once ALL nodes have joined the cluster successfully (you may verify via node consoles or talosctl)." 
+
+# Generate kubeconfig at the end
 log "Generating kubeconfig..."
-talosctl kubeconfig --nodes "$BOOTSTRAP_IP" || {
+talosctl --talosconfig "$CONFIG_DIR/talosconfig" kubeconfig --nodes "$BOOTSTRAP_IP" --endpoints "$BOOTSTRAP_IP" || {
     error "Failed to generate kubeconfig."
     exit 1
 }
 success "Kubeconfig generated."
+export KUBECONFIG="$CONFIG_DIR/kubeconfig"
 
-# Join other control plane nodes
-log "Joining other control plane nodes to the cluster..."
-if [[ ${#PROV_CONTROL_PLANES[@]} -gt 0 ]]; then
-    for ip in "${PROV_CONTROL_PLANES[@]}"; do
-        if [[ "$ip" != "$BOOTSTRAP_IP" ]]; then
-            log "Joining control plane node $ip..."
-            talosctl --nodes "$ip" join --endpoints "$BOOTSTRAP_IP" || error "Failed to join control plane node $ip."
-        fi
-    done
+# Step 11 from docs: Check Cluster Health
+log "Checking Talos cluster health (Step 11)..."
+if talosctl --nodes "$BOOTSTRAP_IP" --talosconfig "$CONFIG_DIR/talosconfig" health; then
+  success "Talos cluster health check passed."
 else
-    CONTROL_PLANE_IPS=$(jq -r ".environments[\"$ENVIRONMENT\"].nodes | to_entries[] | select(.value.type == \"control-plane\") | .value.ip_address" "$JSON_CONFIG_FILE")
-    for ip in $CONTROL_PLANE_IPS; do
-        if [[ "$ip" != "$BOOTSTRAP_IP" ]]; then
-            log "Joining control plane node $ip..."
-            talosctl --nodes "$ip" join --endpoints "$BOOTSTRAP_IP" || error "Failed to join control plane node $ip."
-        fi
-    done
+  warning "Talos cluster health check reported issues. Investigate above output."
 fi
 
-# Join worker nodes
-log "Joining worker nodes to the cluster..."
-if [[ ${#PROV_WORKERS[@]} -gt 0 ]]; then
-    for ip in "${PROV_WORKERS[@]}"; do
-        log "Joining worker node $ip..."
-        talosctl --nodes "$ip" join --endpoints "$BOOTSTRAP_IP" || error "Failed to join worker node $ip."
-    done
-else
-    WORKER_IPS=$(jq -r ".environments[\"$ENVIRONMENT\"].nodes | to_entries[] | select(.value.type == \"worker\") | .value.ip_address" "$JSON_CONFIG_FILE")
-    for ip in $WORKER_IPS; do
-        log "Joining worker node $ip..."
-        talosctl --nodes "$ip" join --endpoints "$BOOTSTRAP_IP" || error "Failed to join worker node $ip."
-    done
-fi
-
-log "All nodes have been instructed to join the cluster."
-read -p "Press [Enter] to wait for all nodes to become ready..."
-
-# Final verification
-log "Waiting for all nodes to become ready..."
-kubectl wait --for=condition=Ready nodes --all --timeout=5m || {
-    warning "Timed out waiting for all nodes to be ready. Check cluster status manually."
-}
-
-log "Verifying cluster status..."
+log "Verifying Kubernetes node registration..."
 kubectl get nodes -o wide
 
 success "Cluster '$ENVIRONMENT' bootstrapped successfully!"
