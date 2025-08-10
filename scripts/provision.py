@@ -3,6 +3,8 @@ import os
 import subprocess
 import sys
 from datetime import datetime
+import tempfile
+import shutil
 
 # --- Constants ---
 RED = '\033[0;31m'
@@ -43,6 +45,8 @@ def main():
         env_config = config['environments'][environment]
         nodes_map = env_config['nodes']
         net_config = env_config['network']
+        cluster_name = env_config['cluster_name']
+        api_server = env_config['api_server']
     except (FileNotFoundError, KeyError) as e:
         error(f"Failed to load or parse configuration: {e}")
         sys.exit(1)
@@ -187,13 +191,49 @@ def main():
             ]
 
             patch_str = json.dumps(config_patch)
-            subprocess.run(['talosctl', 'gen', 'patch', generated_config, base_config, '--patch', patch_str], check=True, capture_output=True)
-            
-            apply_result = subprocess.run(['talosctl', 'apply-config', '--insecure', '--nodes', node_ip, '--file', generated_config], capture_output=True, text=True)
+
+            # Generate a per-node full config using existing secrets and the patch, then apply it
+            secrets_path = os.path.join(config_dir, 'secrets.yaml')
+            if not os.path.exists(secrets_path):
+                warning("secrets.yaml not found; generating a new secrets bundle for this cluster...")
+                gen_secrets = subprocess.run(['talosctl', 'gen', 'secrets', '--output', secrets_path], capture_output=True, text=True)
+                if gen_secrets.returncode != 0 or not os.path.exists(secrets_path):
+                    error(f"Failed to generate secrets.yaml: {gen_secrets.stderr.strip()}")
+                    sys.exit(1)
+
+            tmpdir = tempfile.mkdtemp(prefix=f"talos-node-{hostname}-")
+            try:
+                # Generate both controlplane and worker configs into the temp dir by running from within it
+                cwd_save = os.getcwd()
+                os.chdir(tmpdir)
+                gen_cmd = [
+                    'talosctl', 'gen', 'config', cluster_name, api_server,
+                    '--secrets', secrets_path,
+                    '--config-patch', patch_str,
+                    '--force'
+                ]
+                gen_result = subprocess.run(gen_cmd, capture_output=True, text=True)
+                if gen_result.returncode != 0:
+                    error(f"Failed to generate config for {hostname}: {gen_result.stderr.strip()}")
+                    continue
+
+                gen_file = 'controlplane.yaml' if node_type == 'control-plane' else 'worker.yaml'
+                gen_path = os.path.join(tmpdir, gen_file)
+                if not os.path.exists(gen_path):
+                    error(f"Generated file not found for {hostname}: {gen_path}")
+                    continue
+
+                apply_result = subprocess.run(['talosctl', 'apply-config', '--insecure', '--nodes', node_ip, '--file', gen_path], capture_output=True, text=True)
+            finally:
+                try:
+                    os.chdir(cwd_save)
+                except Exception:
+                    pass
+                shutil.rmtree(tmpdir, ignore_errors=True)
             
             if apply_result.returncode == 0:
                 success(f"Applied config to {hostname}. Node will reboot with static IP {static_ip}.")
-                os.remove(generated_config)
+                # Nothing to clean up; temp dir removed
             else:
                 error(f"Failed to apply config to {hostname}. Error: {apply_result.stderr}")
 
