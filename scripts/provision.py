@@ -56,6 +56,41 @@ def main():
     print(f"{YELLOW}Enter DHCP IPs of booted nodes one per line. Press [Enter] on an empty line when done.{NC}")
     
     def get_node_details(node_ip, nodes_map):
+        def parse_multi_json(stdout: str):
+            s = stdout.strip()
+            if not s:
+                return []
+            # Fast path: try array or single object
+            try:
+                val = json.loads(s)
+                return val if isinstance(val, list) else [val]
+            except json.JSONDecodeError:
+                pass
+            # Convert concatenated objects into an array by inserting commas
+            try:
+                arrayish = '[' + s.replace('}\n{', '},{') + ']'
+                return json.loads(arrayish)
+            except json.JSONDecodeError:
+                # Brace-depth parser fallback
+                blocks = []
+                buf = ''
+                depth = 0
+                for ch in s:
+                    buf += ch
+                    if ch == '{':
+                        depth += 1
+                    elif ch == '}':
+                        depth -= 1
+                        if depth == 0:
+                            blocks.append(buf)
+                            buf = ''
+                out = []
+                for b in blocks:
+                    try:
+                        out.append(json.loads(b))
+                    except json.JSONDecodeError:
+                        continue
+                return out
         try:
             links_cmd = ['talosctl', 'get', 'links', '-e', node_ip, '-n', node_ip, '-i', '-o', 'json']
             links_result = subprocess.run(links_cmd, capture_output=True, text=True)
@@ -66,11 +101,12 @@ def main():
                 warning(f"links returned empty output for {node_ip}")
                 return None
 
-            links = json.loads(links_result.stdout)
+            links = parse_multi_json(links_result.stdout)
             for link in links:
                 spec = link.get('spec', {})
                 mac_addr = spec.get('hardwareAddr', '').upper()
-                iface_name = spec.get('name') or spec.get('linkName')
+                meta = link.get('metadata', {})
+                iface_name = spec.get('name') or spec.get('linkName') or meta.get('id')
                 if mac_addr in nodes_map and iface_name:
                     hostname = nodes_map[mac_addr]['hostname']
                     log(f"Discovered known node: {hostname} ({mac_addr}) at IP {node_ip}")
