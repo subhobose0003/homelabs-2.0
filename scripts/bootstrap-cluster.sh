@@ -34,14 +34,14 @@ if [[ "$ENVIRONMENT" == "non-prod" ]]; then
 
     # MAC -> "hostname;ip"
     CONTROL_PLANE_MAP=( 
-        ["BC:24:11:B3:E3:BB"]="non-prod-controller-1;192.168.0.50" 
-        ["BC:24:11:B4:EC:89"]="non-prod-controller-2;192.168.0.51" 
-        ["BC:24:11:64:46:F5"]="non-prod-controller-3;192.168.0.52" 
+        ["BC:24:11:B3:E3:BB"]="non-prod-controller1;192.168.0.50" 
+        ["BC:24:11:B4:EC:89"]="non-prod-controller2;192.168.0.51" 
+        ["BC:24:11:64:46:F5"]="non-prod-controller3;192.168.0.52" 
     )
     WORKER_MAP=( 
-        ["BC:24:11:B5:5C:0E"]="non-prod-worker-1;192.168.0.53" 
-        ["BC:24:11:4C:E5:FA"]="non-prod-worker-2;192.168.0.54" 
-        ["BC:24:11:25:59:0E"]="non-prod-worker-3;192.168.0.55" 
+        ["BC:24:11:B5:5C:0E"]="non-prod-worker1;192.168.0.53" 
+        ["BC:24:11:4C:E5:FA"]="non-prod-worker2;192.168.0.54" 
+        ["BC:24:11:25:59:0E"]="non-prod-worker3;192.168.0.55" 
     )
 else
     # Add your production configuration here
