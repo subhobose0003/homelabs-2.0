@@ -70,7 +70,7 @@ def main():
         while not stop_event.is_set():
             try:
                 # Step 1: Discover affiliates using the initial node as an endpoint
-                affiliates_cmd = ['talosctl', '--talosconfig', '/dev/null', 'get', 'affiliates', '-n', initial_node_ip, '-o', 'json']
+                affiliates_cmd = ['talosctl', 'get', 'affiliates', '-e', initial_node_ip, '-n', initial_node_ip, '-i', '-o', 'json']
                 result = subprocess.run(affiliates_cmd, capture_output=True, text=True, check=False)
 
                 if result.returncode != 0:
@@ -85,7 +85,7 @@ def main():
                         continue
 
                     # Step 2: Get MAC address for the affiliate
-                    links_cmd = ['talosctl', '--talosconfig', '/dev/null', 'get', 'links', '-n', node_ip, '-o', 'json']
+                    links_cmd = ['talosctl', 'get', 'links', '-e', node_ip, '-n', node_ip, '-i', '-o', 'json']
                     links_result = subprocess.run(links_cmd, capture_output=True, text=True)
                     
                     if links_result.returncode != 0:
