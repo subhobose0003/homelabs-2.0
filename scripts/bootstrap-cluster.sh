@@ -67,42 +67,79 @@ python3 "$SCRIPT_DIR/provision.py" "$ENVIRONMENT"
 warning "All discovered nodes have been configured and are rebooting."
 read -p "Please verify that all nodes are online with their static IPs, then press [Enter] to continue..."
 
+# If available, restrict joins to provisioned nodes from this run
+PROVISIONED_FILE="$CONFIG_DIR/provisioned_nodes.json"
+PROV_CONTROL_PLANES=()
+PROV_WORKERS=()
+if [[ -f "$PROVISIONED_FILE" ]]; then
+    mapfile -t PROV_CONTROL_PLANES < <(jq -r '.nodes[] | select(.type=="control-plane") | .ip_address' "$PROVISIONED_FILE")
+    mapfile -t PROV_WORKERS < <(jq -r '.nodes[] | select(.type=="worker") | .ip_address' "$PROVISIONED_FILE")
+fi
+
+# Determine bootstrap control-plane IP dynamically if needed
+BOOTSTRAP_IP="$CONTROL_PLANE_IP"
+if [[ ${#PROV_CONTROL_PLANES[@]} -gt 0 ]]; then
+    found=0
+    for ip in "${PROV_CONTROL_PLANES[@]}"; do
+        if [[ "$ip" == "$CONTROL_PLANE_IP" ]]; then
+            found=1; break
+        fi
+    done
+    if [[ $found -eq 0 ]]; then
+        BOOTSTRAP_IP="${PROV_CONTROL_PLANES[0]}"
+        warning "Configured CONTROL_PLANE_IP ($CONTROL_PLANE_IP) not provisioned in this run; bootstrapping on $BOOTSTRAP_IP instead."
+    fi
+fi
+
 # Bootstrap the cluster
-log "Bootstrapping cluster on the first control plane node: $CONTROL_PLANE_IP..."
-talosctl bootstrap --nodes "$CONTROL_PLANE_IP" || {
+log "Bootstrapping cluster on control plane node: $BOOTSTRAP_IP..."
+talosctl bootstrap --nodes "$BOOTSTRAP_IP" || {
     error "Failed to bootstrap cluster."
     exit 1
 }
 
-success "Bootstrap command issued to $CONTROL_PLANE_IP."
+success "Bootstrap command issued to $BOOTSTRAP_IP."
 
 log "Generating kubeconfig..."
-talosctl kubeconfig --nodes "$CONTROL_PLANE_IP" || {
+talosctl kubeconfig --nodes "$BOOTSTRAP_IP" || {
     error "Failed to generate kubeconfig."
     exit 1
 }
 success "Kubeconfig generated."
 
-# The python script handles provisioning, but the bash script still needs to join the nodes.
-# We need to get the list of IPs from the config file.
-
 # Join other control plane nodes
 log "Joining other control plane nodes to the cluster..."
-CONTROL_PLANE_IPS=$(jq -r ".environments[\"$ENVIRONMENT\"].nodes | to_entries[] | select(.value.type == \"control-plane\") | .value.ip_address" "$JSON_CONFIG_FILE")
-for ip in $CONTROL_PLANE_IPS; do
-    if [[ "$ip" != "$CONTROL_PLANE_IP" ]]; then
-        log "Joining control plane node $ip..."
-        talosctl --nodes "$ip" join --endpoints "$CONTROL_PLANE_IP" || error "Failed to join control plane node $ip."
-    fi
-done
+if [[ ${#PROV_CONTROL_PLANES[@]} -gt 0 ]]; then
+    for ip in "${PROV_CONTROL_PLANES[@]}"; do
+        if [[ "$ip" != "$BOOTSTRAP_IP" ]]; then
+            log "Joining control plane node $ip..."
+            talosctl --nodes "$ip" join --endpoints "$BOOTSTRAP_IP" || error "Failed to join control plane node $ip."
+        fi
+    done
+else
+    CONTROL_PLANE_IPS=$(jq -r ".environments[\"$ENVIRONMENT\"].nodes | to_entries[] | select(.value.type == \"control-plane\") | .value.ip_address" "$JSON_CONFIG_FILE")
+    for ip in $CONTROL_PLANE_IPS; do
+        if [[ "$ip" != "$BOOTSTRAP_IP" ]]; then
+            log "Joining control plane node $ip..."
+            talosctl --nodes "$ip" join --endpoints "$BOOTSTRAP_IP" || error "Failed to join control plane node $ip."
+        fi
+    done
+fi
 
 # Join worker nodes
 log "Joining worker nodes to the cluster..."
-WORKER_IPS=$(jq -r ".environments[\"$ENVIRONMENT\"].nodes | to_entries[] | select(.value.type == \"worker\") | .value.ip_address" "$JSON_CONFIG_FILE")
-for ip in $WORKER_IPS; do
-    log "Joining worker node $ip..."
-    talosctl --nodes "$ip" join --endpoints "$CONTROL_PLANE_IP" || error "Failed to join worker node $ip."
-done
+if [[ ${#PROV_WORKERS[@]} -gt 0 ]]; then
+    for ip in "${PROV_WORKERS[@]}"; do
+        log "Joining worker node $ip..."
+        talosctl --nodes "$ip" join --endpoints "$BOOTSTRAP_IP" || error "Failed to join worker node $ip."
+    done
+else
+    WORKER_IPS=$(jq -r ".environments[\"$ENVIRONMENT\"].nodes | to_entries[] | select(.value.type == \"worker\") | .value.ip_address" "$JSON_CONFIG_FILE")
+    for ip in $WORKER_IPS; do
+        log "Joining worker node $ip..."
+        talosctl --nodes "$ip" join --endpoints "$BOOTSTRAP_IP" || error "Failed to join worker node $ip."
+    done
+fi
 
 log "All nodes have been instructed to join the cluster."
 read -p "Press [Enter] to wait for all nodes to become ready..."

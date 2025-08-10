@@ -55,7 +55,7 @@ def main():
     os.chdir(config_dir)
 
     node_count = len(nodes_map)
-    log(f"Ready to provision {node_count} nodes. Boot your VMs now.")
+    log(f"Ready to provision up to {node_count} nodes defined in config. Boot any subset now.")
     print()
     print(f"{YELLOW}Enter DHCP IPs of booted nodes one per line. Press [Enter] on an empty line when done.{NC}")
     
@@ -161,6 +161,7 @@ def main():
         sys.exit(0)
 
     # Apply configuration to all confirmed nodes
+    successful_nodes = []
     for node in final_discovered_nodes:
         try:
             node_ip = node.get('address')
@@ -191,54 +192,36 @@ def main():
             ]
 
             patch_str = json.dumps(config_patch)
-
-            # Generate a per-node full config using existing secrets and the patch, then apply it
-            secrets_path = os.path.join(config_dir, 'secrets.yaml')
-            if not os.path.exists(secrets_path):
-                warning("secrets.yaml not found; generating a new secrets bundle for this cluster...")
-                gen_secrets = subprocess.run(['talosctl', 'gen', 'secrets', '--output', secrets_path], capture_output=True, text=True)
-                if gen_secrets.returncode != 0 or not os.path.exists(secrets_path):
-                    error(f"Failed to generate secrets.yaml: {gen_secrets.stderr.strip()}")
-                    sys.exit(1)
-
-            tmpdir = tempfile.mkdtemp(prefix=f"talos-node-{hostname}-")
-            try:
-                # Generate both controlplane and worker configs into the temp dir by running from within it
-                cwd_save = os.getcwd()
-                os.chdir(tmpdir)
-                gen_cmd = [
-                    'talosctl', 'gen', 'config', cluster_name, api_server,
-                    '--secrets', secrets_path,
-                    '--config-patch', patch_str,
-                    '--force'
-                ]
-                gen_result = subprocess.run(gen_cmd, capture_output=True, text=True)
-                if gen_result.returncode != 0:
-                    error(f"Failed to generate config for {hostname}: {gen_result.stderr.strip()}")
-                    continue
-
-                gen_file = 'controlplane.yaml' if node_type == 'control-plane' else 'worker.yaml'
-                gen_path = os.path.join(tmpdir, gen_file)
-                if not os.path.exists(gen_path):
-                    error(f"Generated file not found for {hostname}: {gen_path}")
-                    continue
-
-                apply_result = subprocess.run(['talosctl', 'apply-config', '--insecure', '--nodes', node_ip, '--file', gen_path], capture_output=True, text=True)
-            finally:
-                try:
-                    os.chdir(cwd_save)
-                except Exception:
-                    pass
-                shutil.rmtree(tmpdir, ignore_errors=True)
+            # Apply base config plus per-node patch directly; no per-node secrets or files
+            apply_result = subprocess.run([
+                'talosctl', 'apply-config', '--insecure',
+                '--nodes', node_ip,
+                '--file', base_config,
+                '--config-patch', patch_str
+            ], capture_output=True, text=True)
             
             if apply_result.returncode == 0:
                 success(f"Applied config to {hostname}. Node will reboot with static IP {static_ip}.")
-                # Nothing to clean up; temp dir removed
+                successful_nodes.append({
+                    'hostname': hostname,
+                    'ip_address': static_ip,
+                    'type': node_type,
+                    'mac': mac_addr
+                })
             else:
                 error(f"Failed to apply config to {hostname}. Error: {apply_result.stderr}")
 
         except (KeyError, IndexError) as e:
             error(f"Failed to process node data for MAC {mac_addr}: {e}")
+
+    # Persist successfully provisioned nodes for dynamic join phase
+    try:
+        provisioned_path = os.path.join(config_dir, 'provisioned_nodes.json')
+        with open(provisioned_path, 'w') as f:
+            json.dump({'nodes': successful_nodes}, f, indent=2)
+        log(f"Wrote provisioned node list to {provisioned_path}")
+    except Exception as e:
+        warning(f"Could not write provisioned_nodes.json: {e}")
 
     success("Configuration process complete for all discovered nodes.")
 
