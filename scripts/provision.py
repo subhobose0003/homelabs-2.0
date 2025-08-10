@@ -49,43 +49,66 @@ def main():
     os.chdir(config_dir)
 
     node_count = len(nodes_map)
-    provisioned_count = 0
     log(f"Ready to provision {node_count} nodes. Boot your VMs now.")
-    log("Starting node discovery...")
+    log("Starting node discovery for 60 seconds...")
 
-    # Start discovery process
-    process = subprocess.Popen(['talosctl', 'discover', '--nodes', '127.0.0.1:50000'],
-                               stdout=subprocess.PIPE,
-                               stderr=subprocess.PIPE,
-                               text=True)
-
-    while True:
-        line = process.stdout.readline()
-        if not line:
-            break
-
-        try:
-            node_data = json.loads(line)
-            node_ip = node_data.get('address')
-            mac_addr = node_data.get('hardwareAddr', '').upper()
-            interface = node_data.get('interfaces', [{}])[0].get('name')
-
-            log(f"Discovered node at {node_ip} with MAC {mac_addr} on interface {interface}")
-
-            if mac_addr not in nodes_map:
-                error(f"Discovered node with unknown MAC {mac_addr}. Skipping.")
+    discovered_nodes = []
+    try:
+        # Discover nodes for a limited time
+        proc = subprocess.run(['talosctl', 'discover', '--timeout', '60s'], capture_output=True, text=True, check=True)
+        
+        # Process discovered nodes
+        for line in proc.stdout.strip().split('\n'):
+            if not line:
                 continue
+            try:
+                node_data = json.loads(line)
+                mac_addr = node_data.get('hardwareAddr', '').upper()
+                if mac_addr in nodes_map:
+                    node_data['config'] = nodes_map[mac_addr]
+                    discovered_nodes.append(node_data)
+                    log(f"Discovered known node with MAC {mac_addr} at IP {node_data.get('address')}")
+                else:
+                    warning(f"Discovered unknown node with MAC {mac_addr}. Skipping.")
+            except json.JSONDecodeError:
+                warning(f"Could not parse discovery line: {line}")
 
-            node_info = nodes_map[mac_addr]
+    except subprocess.CalledProcessError as e:
+        error(f"Discovery process failed: {e.stderr}")
+        sys.exit(1)
+
+    if not discovered_nodes:
+        error("No known nodes were discovered. Please check VM status and network.")
+        sys.exit(1)
+
+    # Display summary and ask for confirmation
+    log("--- Discovered Nodes Summary ---")
+    print(f"{YELLOW}{'MAC Address':<20}{'DHCP IP':<18}{'Hostname':<25}{'Static IP':<18}{NC}")
+    print(f"{'='*20}{'='*18}{'='*25}{'='*18}")
+    for node in discovered_nodes:
+        print(f"{node.get('hardwareAddr', '').upper():<20}{node.get('address'):<18}{node['config']['hostname']:<25}{node['config']['ip_address']:<18}")
+    
+    try:
+        input(f"\n{GREEN}Found {len(discovered_nodes)}/{node_count} nodes. Press [Enter] to apply configuration or Ctrl+C to abort...{NC}")
+    except KeyboardInterrupt:
+        warning("\nUser aborted. No changes have been made.")
+        sys.exit(0)
+
+    # Apply configuration to all confirmed nodes
+    for node in discovered_nodes:
+        try:
+            node_ip = node.get('address')
+            mac_addr = node.get('hardwareAddr', '').upper()
+            interface = node.get('interfaces', [{}])[0].get('name')
+            node_info = node['config']
             hostname = node_info['hostname']
             static_ip = node_info['ip_address']
             node_type = node_info['type']
             base_config = 'controlplane.yaml' if node_type == 'control-plane' else 'worker.yaml'
-            
-            log(f"Identified as {node_type.replace('-', ' ').title()} node: {hostname} ({static_ip})")
             generated_config = f"{hostname}.yaml"
 
-            # Create configuration patch
+            log(f"Configuring {hostname} ({node_ip} -> {static_ip})...")
+
             config_patch = [
                 {'op': 'add', 'path': '/machine/network/hostname', 'value': hostname},
                 {'op': 'add', 'path': '/machine/network/interfaces', 'value': [
@@ -101,29 +124,21 @@ def main():
                 {'op': 'add', 'path': '/machine/install/diskSelector', 'value': {'size': '< 50GB'}}
             ]
 
-            # Generate and apply config
             patch_str = json.dumps(config_patch)
             subprocess.run(['talosctl', 'gen', 'patch', generated_config, base_config, '--patch', patch_str], check=True, capture_output=True)
-            success(f"Generated patched config: {generated_config}")
-
-            log(f"Applying configuration to {hostname} ({node_ip})...")
+            
             apply_result = subprocess.run(['talosctl', 'apply-config', '--insecure', '--nodes', node_ip, '--file', generated_config], capture_output=True, text=True)
             
             if apply_result.returncode == 0:
                 success(f"Applied config to {hostname}. Node will reboot with static IP {static_ip}.")
                 os.remove(generated_config)
-                provisioned_count += 1
-                if provisioned_count == node_count:
-                    success(f"All {node_count} nodes have been provisioned.")
-                    break
             else:
-                error(f"Failed to apply config to {hostname} ({node_ip}). Error: {apply_result.stderr}")
+                error(f"Failed to apply config to {hostname}. Error: {apply_result.stderr}")
 
-        except (json.JSONDecodeError, KeyError) as e:
-            error(f"Failed to parse discovery data or node config: {e}. Line: {line.strip()}")
+        except (KeyError, IndexError) as e:
+            error(f"Failed to process node data for MAC {mac_addr}: {e}")
 
-    process.stdout.close()
-    process.wait()
+    success("Configuration process complete for all discovered nodes.")
 
 if __name__ == "__main__":
     main()
