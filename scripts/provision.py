@@ -52,56 +52,9 @@ def main():
 
     node_count = len(nodes_map)
     log(f"Ready to provision {node_count} nodes. Boot your VMs now.")
+    print()
+    print(f"{YELLOW}Enter DHCP IPs of booted nodes one per line. Press [Enter] on an empty line when done.{NC}")
     
-    initial_ip = input(f"{YELLOW}Please enter the DHCP IP of any booted node to start discovery: {NC}").strip()
-    if not initial_ip:
-        error("Initial IP address is required.")
-        sys.exit(1)
-
-    log(f"Starting discovery using initial node {initial_ip}...")
-    log(f"{YELLOW}Press [Enter] when all desired nodes have been discovered.{NC}")
-
-    discovered_nodes = {}
-    stop_discovery = threading.Event()
-
-    def discover_and_map_nodes(initial_node_ip, discovered_nodes_dict, nodes_map, stop_event):
-
-
-        while not stop_event.is_set():
-            try:
-                # Step 1: Discover affiliates using the initial node as an endpoint
-                affiliates_cmd = ['talosctl', 'get', 'affiliates', '-e', initial_node_ip, '-n', initial_node_ip, '-i', '-o', 'json']
-                result = subprocess.run(affiliates_cmd, capture_output=True, text=True, check=False)
-
-                if result.returncode != 0:
-                    warning(f"affiliates command failed (rc={result.returncode}): {result.stderr.strip()}")
-                    time.sleep(5)
-                    continue
-                if not result.stdout.strip():
-                    warning("affiliates returned empty output; waiting for peers...")
-                    time.sleep(5)
-                    continue
-
-                affiliates = json.loads(result.stdout)
-
-                for affiliate in affiliates:
-                    node_ip = affiliate.get('spec', {}).get('addresses', [None])[0]
-                    if not node_ip or any(node.get('address') == node_ip for node in discovered_nodes_dict.values()):
-                        continue
-
-                    # Step 2: Get MAC address for the affiliate
-                    node_details = get_node_details(node_ip, nodes_map)
-                    if node_details and node_details['hardwareAddr'] not in discovered_nodes_dict:
-                        discovered_nodes_dict[node_details['hardwareAddr']] = node_details
-
-            except (json.JSONDecodeError, FileNotFoundError):
-                pass # Suppress errors
-            
-            stop_event.wait(5) # Poll every 5 seconds
-
-    import time
-    # Process the initial node first, then start discovery for others.
-    # This is done in the main thread before starting the discovery loop.
     def get_node_details(node_ip, nodes_map):
         try:
             links_cmd = ['talosctl', 'get', 'links', '-e', node_ip, '-n', node_ip, '-i', '-o', 'json']
@@ -127,24 +80,26 @@ def main():
                         'interfaces': [{'name': iface_name}],
                         'config': nodes_map[mac_addr]
                     }
+                elif iface_name and mac_addr:
+                    warning(f"Found node at {node_ip} with MAC {mac_addr} on interface {iface_name}, but it's not in config.json.")
         except (json.JSONDecodeError, FileNotFoundError):
             return None
         return None
 
-    initial_node_details = get_node_details(initial_ip, nodes_map)
-    if initial_node_details:
-        discovered_nodes[initial_node_details['hardwareAddr']] = initial_node_details
-
-    discovery_thread = threading.Thread(target=discover_and_map_nodes, args=(initial_ip, discovered_nodes, nodes_map, stop_discovery))
-    discovery_thread.daemon = True
-    discovery_thread.start()
-
-    # Wait for user to press Enter
-    input()
-
-    log("Stopping discovery...")
-    stop_discovery.set()
-    discovery_thread.join()
+    discovered_nodes = {}
+    while True:
+        ip = input("Node DHCP IP (or blank to finish): ").strip()
+        if not ip:
+            break
+        # Skip already processed IPs
+        if any(n.get('address') == ip for n in discovered_nodes.values()):
+            warning(f"IP {ip} already processed; skipping")
+            continue
+        details = get_node_details(ip, nodes_map)
+        if details:
+            discovered_nodes[details['hardwareAddr']] = details
+        else:
+            warning(f"Could not map node at {ip}. Ensure it is booted in Talos maintenance mode.")
 
     final_discovered_nodes = [node for node in discovered_nodes.values() if not node.get('unknown')]
 
