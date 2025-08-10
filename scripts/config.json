@@ -1,0 +1,54 @@
+{
+    "environments": {
+        "non-prod": {
+            "cluster_name": "homelab-nonprod",
+            "api_server": "https://non-prod-api.local.homelabs.in:6443",
+            "control_plane_ip": "192.168.0.50",
+            "network": {
+                "gateway_ip": "192.168.0.1",
+                "ip_cidr": "24",
+                "dns_servers": [
+                    "192.168.0.5",
+                    "8.8.8.8"
+                ],
+                "ntp_servers": [
+                    "time.cloudflare.com",
+                    "pool.ntp.org"
+                ]
+            },
+            "nodes": {
+                "BC:24:11:B3:E3:BB": {
+                    "type": "control-plane",
+                    "hostname": "non-prod-controller1",
+                    "ip_address": "192.168.0.50"
+                },
+                "BC:24:11:B4:EC:89": {
+                    "type": "control-plane",
+                    "hostname": "non-prod-controller2",
+                    "ip_address": "192.168.0.51"
+                },
+                "BC:24:11:64:46:F5": {
+                    "type": "control-plane",
+                    "hostname": "non-prod-controller3",
+                    "ip_address": "192.168.0.52"
+                },
+                "BC:24:11:B5:5C:0E": {
+                    "type": "worker",
+                    "hostname": "non-prod-worker1",
+                    "ip_address": "192.168.0.53"
+                },
+                "BC:24:11:4C:E5:FA": {
+                    "type": "worker",
+                    "hostname": "non-prod-worker2",
+                    "ip_address": "192.168.0.54"
+                },
+                "BC:24:11:25:59:0E": {
+                    "type": "worker",
+                    "hostname": "non-prod-worker3",
+                    "ip_address": "192.168.0.55"
+                }
+            }
+        },
+        "prod": {}
+    }
+}
