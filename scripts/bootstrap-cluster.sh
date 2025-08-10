@@ -18,35 +18,13 @@ YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
-# Network Configuration
-GATEWAY_IP="192.168.0.1"
-DNS_SERVERS=("192.168.0.5" "8.8.8.8")
-NTP_SERVERS=("time.cloudflare.com" "pool.ntp.org")
-IP_CIDR="24"
-
-# Node definitions
-declare -A CONTROL_PLANE_MAP
-declare -A WORKER_MAP
-
-if [[ "$ENVIRONMENT" == "non-prod" ]]; then
-    CLUSTER_NAME="homelab-nonprod"
-    API_SERVER="https://non-prod-api.local.homelabs.in:6443"
-    CONTROL_PLANE_IP="192.168.0.50"
-
-    # MAC -> "hostname;ip"
-    CONTROL_PLANE_MAP=( 
-        ["BC:24:11:B3:E3:BB"]="non-prod-controller1;192.168.0.50" 
-        ["BC:24:11:B4:EC:89"]="non-prod-controller2;192.168.0.51" 
-        ["BC:24:11:64:46:F5"]="non-prod-controller3;192.168.0.52" 
-    )
-    WORKER_MAP=( 
-        ["BC:24:11:B5:5C:0E"]="non-prod-worker1;192.168.0.53" 
-        ["BC:24:11:4C:E5:FA"]="non-prod-worker2;192.168.0.54" 
-        ["BC:24:11:25:59:0E"]="non-prod-worker3;192.168.0.55" 
-    )
+# Source the configuration file
+CONFIG_FILE="$SCRIPT_DIR/bootstrap-config.sh"
+if [[ -f "$CONFIG_FILE" ]]; then
+    # Pass environment to the config script
+    source "$CONFIG_FILE"
 else
-    # Add your production configuration here
-    error "Production environment configuration is not defined. Exiting."
+    error "Configuration file not found: $CONFIG_FILE"
     exit 1
 fi
 
