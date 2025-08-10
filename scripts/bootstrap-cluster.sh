@@ -23,9 +23,27 @@ error() { echo -e "\033[0;31m[$(date +'%Y-%m-%d %H:%M:%S')] ✗ $1\033[0m"; }
 # Validate environment and tools
 if ! command -v talosctl &> /dev/null; then error "talosctl is not installed." && exit 1; fi
 if ! command -v kubectl &> /dev/null; then error "kubectl is not installed." && exit 1; fi
+if ! command -v jq &> /dev/null; then error "jq is not installed. It is required for parsing config.json." && exit 1; fi
 
+# --- Configuration ---
+log "Loading configuration from scripts/config.json..."
+JSON_CONFIG_FILE="$SCRIPT_DIR/config.json"
+if [[ ! -f "$JSON_CONFIG_FILE" ]]; then
+    error "Configuration file not found: $JSON_CONFIG_FILE"
+    exit 1
+fi
 
-log "Starting dynamic bootstrap for $ENVIRONMENT cluster..."
+# Parse config values using jq
+CLUSTER_NAME=$(jq -r ".environments.$ENVIRONMENT.cluster_name" "$JSON_CONFIG_FILE")
+API_SERVER=$(jq -r ".environments.$ENVIRONMENT.api_server" "$JSON_CONFIG_FILE")
+CONTROL_PLANE_IP=$(jq -r ".environments.$ENVIRONMENT.control_plane_ip" "$JSON_CONFIG_FILE")
+
+if [[ -z "$CLUSTER_NAME" || -z "$API_SERVER" || -z "$CONTROL_PLANE_IP" ]]; then
+    error "Failed to parse critical configuration from $JSON_CONFIG_FILE for environment '$ENVIRONMENT'."
+    exit 1
+fi
+
+log "Starting dynamic bootstrap for $ENVIRONMENT cluster ($CLUSTER_NAME)..."
 
 CONFIG_DIR="$PROJECT_ROOT/clusters/$ENVIRONMENT/talos-config"
 mkdir -p "$CONFIG_DIR"
@@ -62,22 +80,25 @@ talosctl kubeconfig --nodes "$CONTROL_PLANE_IP" || {
 }
 success "Kubeconfig generated."
 
+# The python script handles provisioning, but the bash script still needs to join the nodes.
+# We need to get the list of IPs from the config file.
+
 # Join other control plane nodes
 log "Joining other control plane nodes to the cluster..."
-for mac in "${!CONTROL_PLANE_MAP[@]}"; do
-    IFS=';' read -r _hostname static_ip <<< "${CONTROL_PLANE_MAP[$mac]}"
-    if [[ "$static_ip" != "$CONTROL_PLANE_IP" ]]; then
-        log "Joining control plane node $static_ip..."
-        talosctl --nodes "$static_ip" join --endpoints "$CONTROL_PLANE_IP" || error "Failed to join control plane node $static_ip."
+CONTROL_PLANE_IPS=$(jq -r '.environments.["non-prod"].nodes | to_entries[] | select(.value.type == "control-plane") | .value.ip_address' "$JSON_CONFIG_FILE")
+for ip in $CONTROL_PLANE_IPS; do
+    if [[ "$ip" != "$CONTROL_PLANE_IP" ]]; then
+        log "Joining control plane node $ip..."
+        talosctl --nodes "$ip" join --endpoints "$CONTROL_PLANE_IP" || error "Failed to join control plane node $ip."
     fi
 done
 
 # Join worker nodes
 log "Joining worker nodes to the cluster..."
-for mac in "${!WORKER_MAP[@]}"; do
-    IFS=';' read -r _hostname static_ip <<< "${WORKER_MAP[$mac]}"
-    log "Joining worker node $static_ip..."
-    talosctl --nodes "$static_ip" join --endpoints "$CONTROL_PLANE_IP" || error "Failed to join worker node $static_ip."
+WORKER_IPS=$(jq -r '.environments.["non-prod"].nodes | to_entries[] | select(.value.type == "worker") | .value.ip_address' "$JSON_CONFIG_FILE")
+for ip in $WORKER_IPS; do
+    log "Joining worker node $ip..."
+    talosctl --nodes "$ip" join --endpoints "$CONTROL_PLANE_IP" || error "Failed to join worker node $ip."
 done
 
 log "All nodes have been instructed to join the cluster."
