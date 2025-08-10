@@ -18,19 +18,22 @@ mkdir -p scripts docs
 **Dependencies**: None
 **Order**: 1st
 ```bash
-# Generate Talos configs for both clusters
-talosctl gen config homelab-nonprod https://nonprod-api.internal:6443
-talosctl gen config homelab-prod https://prod-api.internal:6443
+# Bootstrap non-prod (interactive)
+# - Sets talosctl endpoints to first control-plane
+# - Bootstraps etcd once on that node
+# - Nodes auto-join after configs are applied (no `talosctl join`)
+# - Generates kubeconfig at clusters/non-prod/talos-config/kubeconfig
+# - Waits for all nodes to register and become Ready, then runs talosctl health
+./scripts/bootstrap-cluster.sh non-prod
 
-# Bootstrap clusters
-# Non-prod first for testing
-talosctl apply-config --insecure --nodes 10.0.1.10 --file controlplane.yaml
-talosctl bootstrap --nodes 10.0.1.10
-
-# Then prod cluster
-talosctl apply-config --insecure --nodes 10.0.2.10 --file controlplane.yaml
-talosctl bootstrap --nodes 10.0.2.10
+# Bootstrap prod when ready
+./scripts/bootstrap-cluster.sh prod
 ```
+
+Notes:
+- Endpoints are configured in talosconfig before bootstrap per Talos docs.
+- Per-node network patches are generated and saved under `clusters/<env>/talos-config/[hostname]-network-patch.yaml`.
+- Kubeconfig is written to `clusters/<env>/talos-config/kubeconfig`.
 
 ### Phase 2: Core Infrastructure - Non-Prod (Week 2-3)
 
@@ -56,7 +59,7 @@ talosctl bootstrap --nodes 10.0.2.10
 # clusters/non-prod/infra/metallb/
 ├── namespace.yaml
 ├── metallb-system.yaml
-└── ipaddresspool.yaml (10.0.1.100-10.0.1.150)
+└── ipaddresspool.yaml (192.168.0.100-192.168.0.150)
 ```
 
 #### 2.3 Longhorn (Storage)
@@ -220,7 +223,7 @@ talosctl bootstrap --nodes 10.0.2.10
 - **Third disk (/dev/sdc)**: MinIO object storage
 
 ### Network Requirements
-- **Non-prod LoadBalancer range**: 10.0.1.100-10.0.1.150
+- **Non-prod LoadBalancer range**: 192.168.0.100-192.168.0.150
 - **Prod LoadBalancer range**: 10.0.2.100-10.0.2.150
 - **DNS integration**: Must point to internal DNS server
 - **Ingress domains**: 

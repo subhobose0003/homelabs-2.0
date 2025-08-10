@@ -28,7 +28,7 @@ homelabs/
    - RFC2136 provider configuration for dynamic DNS updates
 
 2. **MetalLB** - LoadBalancer services for bare-metal
-   - IP address pools: 10.0.1.100-150 (non-prod), 10.0.2.100-150 (prod)
+   - IP address pools: 192.168.0.100-150 (non-prod), 10.0.2.100-150 (prod)
    - L2 advertisement configuration
 
 3. **Longhorn** - Distributed block storage
@@ -61,9 +61,11 @@ homelabs/
 ✅ **4 comprehensive automation scripts**:
 
 1. **`bootstrap-cluster.sh`** - Talos cluster bootstrap
-   - Generates Talos configurations
-   - Bootstraps both non-prod and prod clusters
-   - Applies configurations to control plane and worker nodes
+   - Generates base Talos configuration if missing
+   - Sets talosctl endpoints to first control-plane and bootstraps etcd once
+   - Nodes auto-join after configs are applied (no `talosctl join`)
+   - Saves kubeconfig to `clusters/<env>/talos-config/kubeconfig`
+   - Waits for all nodes to register and become Ready, then runs `talosctl health`
 
 2. **`deploy-infrastructure.sh`** - Infrastructure deployment
    - Deploys all components in correct order
@@ -104,6 +106,12 @@ homelabs/
 # Bootstrap prod cluster  
 ./scripts/bootstrap-cluster.sh prod
 ```
+
+Notes:
+- Endpoints are configured in talosconfig before bootstrap per Talos docs.
+- The script prompts to confirm control plane readiness and that all nodes have joined.
+- Kubeconfig is written to `clusters/<env>/talos-config/kubeconfig`.
+- Per-node network patch files are saved as `clusters/<env>/talos-config/[hostname]-network-patch.yaml`.
 
 ### Phase 2: Infrastructure Deployment
 ```bash

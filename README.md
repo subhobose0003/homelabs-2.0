@@ -4,7 +4,7 @@ A complete GitOps-driven Kubernetes infrastructure using Talos Linux with automa
 
 ## Architecture Overview
 
-- **Non-Prod Cluster**: 3 master + 3 worker nodes (IP range: 10.0.1.x)
+- **Non-Prod Cluster**: 3 master + 3 worker nodes (IP range: 192.168.0.x)
 - **Prod Cluster**: 3 master + 3 worker nodes (IP range: 10.0.2.x)
 - **GitOps Workflow**: Feature branches → Dev → Production with automated environments
 
@@ -47,7 +47,7 @@ homelabs/
 
 ## Getting Started
 
-1. **Phase 1**: Bootstrap Talos clusters
+1. **Phase 1**: Bootstrap Talos clusters (scripted, endpoints set automatically)
 2. **Phase 2**: Deploy infrastructure stack (non-prod first)
 3. **Phase 3**: Set up GitOps automation
 4. **Phase 4**: Replicate to production
@@ -62,7 +62,12 @@ homelabs/
 ## Quick Commands
 
 ```bash
-# Bootstrap non-prod cluster
+# Bootstrap non-prod cluster (interactive)
+# - Sets talosctl endpoints to first control-plane
+# - Bootstraps etcd once
+# - Prompts to confirm control-plane readiness and node joins
+# - Generates kubeconfig at clusters/non-prod/talos-config/kubeconfig
+# - Waits for all nodes to register and become Ready, then runs talosctl health
 ./scripts/bootstrap-cluster.sh non-prod
 
 # Deploy infrastructure
@@ -74,6 +79,16 @@ kubectl apply -k clusters/non-prod/infra/
 # Cleanup ephemeral environments
 ./scripts/cleanup-ephemeral-env.sh
 ```
+
+### Bootstrap Notes
+
+- Nodes auto-join after their configs are applied; there is no `talosctl join`.
+- Endpoints are configured in talosconfig prior to bootstrap.
+- Kubeconfig is written to `clusters/<env>/talos-config/kubeconfig`.
+- Per-node network patches are saved to `clusters/<env>/talos-config/[hostname]-network-patch.yaml`.
+- Timeouts can be tuned via environment variables:
+  - `WAIT_TIMEOUT` (default 900s) and `WAIT_INTERVAL` (default 5s) for node registration.
+  - `K8S_READY_TIMEOUT_SECS` (default 600s) for node Ready condition.
 
 ## Monitoring
 

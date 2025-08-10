@@ -1,0 +1,40 @@
+{
+  "nodes": [
+    {
+      "hostname": "non-prod-controller1",
+      "ip_address": "192.168.0.50",
+      "type": "control-plane",
+      "mac": "BC:24:11:B3:E3:BB"
+    },
+    {
+      "hostname": "non-prod-controller2",
+      "ip_address": "192.168.0.51",
+      "type": "control-plane",
+      "mac": "BC:24:11:B4:EC:89"
+    },
+    {
+      "hostname": "non-prod-controller3",
+      "ip_address": "192.168.0.52",
+      "type": "control-plane",
+      "mac": "BC:24:11:64:46:F5"
+    },
+    {
+      "hostname": "non-prod-worker1",
+      "ip_address": "192.168.0.53",
+      "type": "worker",
+      "mac": "BC:24:11:B5:5C:0E"
+    },
+    {
+      "hostname": "non-prod-worker2",
+      "ip_address": "192.168.0.54",
+      "type": "worker",
+      "mac": "BC:24:11:4C:E5:FA"
+    },
+    {
+      "hostname": "non-prod-worker3",
+      "ip_address": "192.168.0.55",
+      "type": "worker",
+      "mac": "BC:24:11:25:59:0E"
+    }
+  ]
+}

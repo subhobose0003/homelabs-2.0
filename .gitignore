@@ -1,0 +1,9 @@
+clusters/*/talos-config/*.yaml
+
+# Ignore all generated Talos artifacts for non-prod except provisioned_nodes.json
+clusters/non-prod/talos-config/*
+!clusters/non-prod/talos-config/provisioned_nodes.json
+
+# Ignore all generated Talos artifacts for prod except provisioned_nodes.json
+clusters/prod/talos-config/*
+!clusters/prod/talos-config/provisioned_nodes.json
