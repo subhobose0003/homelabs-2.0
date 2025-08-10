@@ -107,25 +107,29 @@ while read -r line; do
     log "Identified as $NODE_TYPE node: $HOSTNAME ($STATIC_IP)"
     GENERATED_CONFIG="${HOSTNAME}.yaml"
 
-    # Create network patch
-    NETWORK_PATCH=$(cat <<-EOF
-- op: replace
-  path: /machine/network
+    # Create configuration patch
+    CONFIG_PATCH=$(cat <<-EOF
+- op: add
+  path: /machine/network/hostname
+  value: ${HOSTNAME}
+- op: add
+  path: /machine/network/interfaces
   value:
-    interfaces:
-      - interface: ${INTERFACE}
-        dhcp: false
-        addresses:
-          - ${STATIC_IP}/${IP_CIDR}
-        routes:
-          - network: 0.0.0.0/0
-            gateway: ${GATEWAY_IP}
-    nameservers: [${DNS_SERVERS[0]}, ${DNS_SERVERS[1]}]
+    - interface: ${INTERFACE}
+      dhcp: false
+      addresses:
+        - ${STATIC_IP}/${IP_CIDR}
+      routes:
+        - network: 0.0.0.0/0
+          gateway: ${GATEWAY_IP}
+- op: add
+  path: /machine/network/nameservers
+  value: [${DNS_SERVERS[0]}, ${DNS_SERVERS[1]}]
 EOF
 )
 
     # Generate final config file
-    talosctl gen patch "$GENERATED_CONFIG" "$BASE_CONFIG" --patch "$NETWORK_PATCH" > /dev/null
+    talosctl gen patch "$GENERATED_CONFIG" "$BASE_CONFIG" --patch "$CONFIG_PATCH" > /dev/null
     success "Generated patched config: $GENERATED_CONFIG"
 
     # Apply the configuration
