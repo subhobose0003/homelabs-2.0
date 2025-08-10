@@ -189,6 +189,48 @@ talosctl --talosconfig "$CONFIG_DIR/talosconfig" kubeconfig --nodes "$BOOTSTRAP_
 success "Kubeconfig generated."
 export KUBECONFIG="$CONFIG_DIR/kubeconfig"
 
+# Automated check: wait for all expected nodes to register in Kubernetes
+TOTAL_EXPECTED=0
+if [[ -f "$CONFIG_DIR/provisioned_nodes.json" ]] && jq -e '.nodes | length > 0' "$CONFIG_DIR/provisioned_nodes.json" >/dev/null 2>&1; then
+  TOTAL_EXPECTED=$(jq '.nodes | length' "$CONFIG_DIR/provisioned_nodes.json")
+else
+  CP_COUNT=$(jq -r ".environments[\"$ENVIRONMENT\"].nodes | to_entries[] | select(.value.type == \"control-plane\") | .value.ip_address" "$JSON_CONFIG_FILE" | wc -l | tr -d ' ')
+  WK_COUNT=$(jq -r ".environments[\"$ENVIRONMENT\"].nodes | to_entries[] | select(.value.type == \"worker\") | .value.ip_address" "$JSON_CONFIG_FILE" | wc -l | tr -d ' ')
+  TOTAL_EXPECTED=$(( CP_COUNT + WK_COUNT ))
+fi
+
+log "Waiting for $TOTAL_EXPECTED node object(s) to register in Kubernetes..."
+WAIT_TIMEOUT=${WAIT_TIMEOUT:-900}
+WAIT_INTERVAL=${WAIT_INTERVAL:-5}
+start_ts=$(date +%s)
+while true; do
+  if ! kubectl get nodes -o json >/dev/null 2>&1; then
+    warning "Kubernetes API not yet reachable via kubeconfig; retrying..."
+    sleep "$WAIT_INTERVAL"; continue
+  fi
+  count=$(kubectl get nodes -o json | jq '.items | length')
+  log "Currently detected nodes: $count/$TOTAL_EXPECTED"
+  if [[ "$count" -ge "$TOTAL_EXPECTED" ]]; then
+    success "All node objects are visible in Kubernetes."
+    break
+  fi
+  now=$(date +%s)
+  if [[ $((now - start_ts)) -ge $WAIT_TIMEOUT ]]; then
+    warning "Timed out waiting for all nodes to register in Kubernetes. Proceeding."
+    break
+  fi
+  sleep "$WAIT_INTERVAL"
+done
+
+# Wait for all nodes to become Ready (optional but recommended)
+K8S_READY_TIMEOUT_SECS=${K8S_READY_TIMEOUT_SECS:-600}
+log "Waiting for all nodes to become Ready (timeout: ${K8S_READY_TIMEOUT_SECS}s)..."
+if kubectl wait --for=condition=Ready nodes --all --timeout="${K8S_READY_TIMEOUT_SECS}s"; then
+  success "All nodes report Ready."
+else
+  warning "Timed out waiting for all nodes to become Ready. Proceeding; check CNI/addons and node status."
+fi
+
 # Step 11 from docs: Check Cluster Health
 log "Checking Talos cluster health (Step 11)..."
 if talosctl --nodes "$BOOTSTRAP_IP" --talosconfig "$CONFIG_DIR/talosconfig" health; then
