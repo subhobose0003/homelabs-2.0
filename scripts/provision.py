@@ -73,8 +73,8 @@ def main():
                 affiliates_cmd = ['talosctl', 'get', 'affiliates', '-e', initial_node_ip, '-n', initial_node_ip, '-i', '-o', 'json']
                 result = subprocess.run(affiliates_cmd, capture_output=True, text=True, check=False)
 
-                if result.returncode != 0:
-                    time.sleep(5) # Wait and retry if initial node is not ready
+                if result.returncode != 0 or not result.stdout.strip():
+                    time.sleep(5) # Wait and retry if initial node is not ready or output is empty
                     continue
 
                 affiliates = json.loads(result.stdout)
