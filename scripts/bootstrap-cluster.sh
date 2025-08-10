@@ -34,9 +34,9 @@ if [[ ! -f "$JSON_CONFIG_FILE" ]]; then
 fi
 
 # Parse config values using jq
-CLUSTER_NAME=$(jq -r ".environments.$ENVIRONMENT.cluster_name" "$JSON_CONFIG_FILE")
-API_SERVER=$(jq -r ".environments.$ENVIRONMENT.api_server" "$JSON_CONFIG_FILE")
-CONTROL_PLANE_IP=$(jq -r ".environments.$ENVIRONMENT.control_plane_ip" "$JSON_CONFIG_FILE")
+CLUSTER_NAME=$(jq -r ".environments[\"$ENVIRONMENT\"].cluster_name" "$JSON_CONFIG_FILE")
+API_SERVER=$(jq -r ".environments[\"$ENVIRONMENT\"].api_server" "$JSON_CONFIG_FILE")
+CONTROL_PLANE_IP=$(jq -r ".environments[\"$ENVIRONMENT\"].control_plane_ip" "$JSON_CONFIG_FILE")
 
 if [[ -z "$CLUSTER_NAME" || -z "$API_SERVER" || -z "$CONTROL_PLANE_IP" ]]; then
     error "Failed to parse critical configuration from $JSON_CONFIG_FILE for environment '$ENVIRONMENT'."
@@ -85,7 +85,7 @@ success "Kubeconfig generated."
 
 # Join other control plane nodes
 log "Joining other control plane nodes to the cluster..."
-CONTROL_PLANE_IPS=$(jq -r '.environments.["non-prod"].nodes | to_entries[] | select(.value.type == "control-plane") | .value.ip_address' "$JSON_CONFIG_FILE")
+CONTROL_PLANE_IPS=$(jq -r ".environments[\"$ENVIRONMENT\"].nodes | to_entries[] | select(.value.type == \"control-plane\") | .value.ip_address" "$JSON_CONFIG_FILE")
 for ip in $CONTROL_PLANE_IPS; do
     if [[ "$ip" != "$CONTROL_PLANE_IP" ]]; then
         log "Joining control plane node $ip..."
@@ -95,7 +95,7 @@ done
 
 # Join worker nodes
 log "Joining worker nodes to the cluster..."
-WORKER_IPS=$(jq -r '.environments.["non-prod"].nodes | to_entries[] | select(.value.type == "worker") | .value.ip_address' "$JSON_CONFIG_FILE")
+WORKER_IPS=$(jq -r ".environments[\"$ENVIRONMENT\"].nodes | to_entries[] | select(.value.type == \"worker\") | .value.ip_address" "$JSON_CONFIG_FILE")
 for ip in $WORKER_IPS; do
     log "Joining worker node $ip..."
     talosctl --nodes "$ip" join --endpoints "$CONTROL_PLANE_IP" || error "Failed to join worker node $ip."
