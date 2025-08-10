@@ -65,16 +65,13 @@ def main():
     stop_discovery = threading.Event()
 
     def discover_and_map_nodes(initial_node_ip, discovered_nodes_dict, nodes_map, stop_event):
-        # Create a clean environment for talosctl discovery, removing the inherited TALOSCONFIG
-        discovery_env = os.environ.copy()
-        if 'TALOSCONFIG' in discovery_env:
-            del discovery_env['TALOSCONFIG']
+
 
         while not stop_event.is_set():
             try:
                 # Step 1: Discover affiliates using the initial node as an endpoint
-                affiliates_cmd = ['talosctl', 'get', 'affiliates', '-n', initial_node_ip, '-o', 'json']
-                result = subprocess.run(affiliates_cmd, capture_output=True, text=True, check=False, env=discovery_env)
+                affiliates_cmd = ['talosctl', '--config', '/dev/null', 'get', 'affiliates', '-n', initial_node_ip, '-o', 'json']
+                result = subprocess.run(affiliates_cmd, capture_output=True, text=True, check=False)
 
                 if result.returncode != 0:
                     time.sleep(5) # Wait and retry if initial node is not ready
@@ -88,8 +85,8 @@ def main():
                         continue
 
                     # Step 2: Get MAC address for the affiliate
-                    links_cmd = ['talosctl', 'get', 'links', '-n', node_ip, '-o', 'json']
-                    links_result = subprocess.run(links_cmd, capture_output=True, text=True, env=discovery_env)
+                    links_cmd = ['talosctl', '--config', '/dev/null', 'get', 'links', '-n', node_ip, '-o', 'json']
+                    links_result = subprocess.run(links_cmd, capture_output=True, text=True)
                     
                     if links_result.returncode != 0:
                         continue
