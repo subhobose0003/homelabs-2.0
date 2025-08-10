@@ -56,50 +56,66 @@ def main():
     log(f"{YELLOW}Press [Enter] when all desired nodes have been discovered.{NC}")
 
     discovered_nodes = {}
-    # Start discovery as a background process
-    discover_process = subprocess.Popen(
-        ['talosctl', 'discover'],
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-        bufsize=1 # Line-buffered
-    )
+    stop_discovery = threading.Event()
 
-    def read_discover_output(process, discovered_nodes_dict, nodes_map):
-        for line in iter(process.stdout.readline, ''):
-            if not line:
-                break
+    def discover_and_map_nodes(discovered_nodes_dict, nodes_map, stop_event):
+        while not stop_event.is_set():
             try:
-                node_data = json.loads(line)
-                mac_addr = node_data.get('hardwareAddr', '').upper()
-                if mac_addr in nodes_map:
-                    if mac_addr not in discovered_nodes_dict:
-                        hostname = nodes_map[mac_addr]['hostname']
-                        log(f"Discovered known node: {hostname} ({mac_addr}) at IP {node_data.get('address')}")
-                        node_data['config'] = nodes_map[mac_addr]
-                        discovered_nodes_dict[mac_addr] = node_data
-                else:
-                    if mac_addr not in discovered_nodes_dict:
-                        warning(f"Discovered unknown node with MAC {mac_addr}. Skipping.")
-                        # Store unknown nodes to avoid repeated warnings
-                        discovered_nodes_dict[mac_addr] = {'unknown': True}
-            except (json.JSONDecodeError, KeyError):
-                warning(f"Could not parse discovery line: {line.strip()}")
+                # Step 1: Discover affiliates
+                affiliates_cmd = ['talosctl', 'get', 'affiliates', '-o', 'json']
+                result = subprocess.run(affiliates_cmd, capture_output=True, text=True, check=True)
+                affiliates = json.loads(result.stdout)
 
-    reader_thread = threading.Thread(target=read_discover_output, args=(discover_process, discovered_nodes, nodes_map))
-    reader_thread.daemon = True
-    reader_thread.start()
+                for affiliate in affiliates:
+                    # Assuming the first IP is the one we can connect to
+                    node_ip = affiliate.get('spec', {}).get('addresses', [None])[0]
+                    if not node_ip:
+                        continue
+
+                    # Check if we've already processed this IP
+                    if any(node.get('address') == node_ip for node in discovered_nodes_dict.values()):
+                        continue
+
+                    # Step 2: Get MAC address for the affiliate
+                    links_cmd = ['talosctl', 'get', 'links', '--nodes', node_ip, '-o', 'json']
+                    links_result = subprocess.run(links_cmd, capture_output=True, text=True)
+                    
+                    if links_result.returncode != 0:
+                        # Node might not be fully ready, skip for now
+                        continue
+
+                    links = json.loads(links_result.stdout)
+                    for link in links:
+                        mac_addr = link.get('spec', {}).get('hardwareAddr', '').upper()
+                        if mac_addr in nodes_map:
+                            if mac_addr not in discovered_nodes_dict:
+                                hostname = nodes_map[mac_addr]['hostname']
+                                log(f"Discovered known node: {hostname} ({mac_addr}) at IP {node_ip}")
+                                node_data = {
+                                    'address': node_ip,
+                                    'hardwareAddr': mac_addr,
+                                    'interfaces': [{'name': link.get('spec', {}).get('linkName')}],
+                                    'config': nodes_map[mac_addr]
+                                }
+                                discovered_nodes_dict[mac_addr] = node_data
+                                break # Found a match, no need to check other interfaces
+
+            except (subprocess.CalledProcessError, json.JSONDecodeError, FileNotFoundError):
+                # Suppress errors during discovery loop (e.g., no nodes yet)
+                pass
+            
+            stop_event.wait(5) # Poll every 5 seconds
+
+    discovery_thread = threading.Thread(target=discover_and_map_nodes, args=(discovered_nodes, nodes_map, stop_discovery))
+    discovery_thread.daemon = True
+    discovery_thread.start()
 
     # Wait for user to press Enter
     input()
 
     log("Stopping discovery...")
-    discover_process.terminate()
-    reader_thread.join(timeout=2) # Wait briefly for the thread to exit
-    try:
-        discover_process.wait(timeout=5)
-    except subprocess.TimeoutExpired:
-        discover_process.kill()
+    stop_discovery.set()
+    discovery_thread.join()
 
     final_discovered_nodes = [node for node in discovered_nodes.values() if not node.get('unknown')]
 
