@@ -9,30 +9,21 @@ ENVIRONMENT=${1:-non-prod}
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
 
+# --- Helper Functions ---
+# Must be defined before config is sourced
+log() { echo -e "\033[0;34m[$(date +'%Y-%m-%d %H:%M:%S')] $1\033[0m"; }
+success() { echo -e "\033[0;32m[$(date +'%Y-%m-%d %H:%M:%S')] ✓ $1\033[0m"; }
+warning() { echo -e "\033[1;33m[$(date +'%Y-%m-%d %H:%M:%S')] ⚠ $1\033[0m"; }
+error() { echo -e "\033[0;31m[$(date +'%Y-%m-%d %H:%M:%S')] ✗ $1\033[0m"; }
+
 # --- Configuration ---
-
-# Color codes for output
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-BLUE='\033[0;34m'
-NC='\033[0m' # No Color
-
-# Source the configuration file
 CONFIG_FILE="$SCRIPT_DIR/bootstrap-config.sh"
 if [[ -f "$CONFIG_FILE" ]]; then
-    # Pass environment to the config script
     source "$CONFIG_FILE"
 else
     error "Configuration file not found: $CONFIG_FILE"
     exit 1
 fi
-
-# --- Helper Functions ---
-log() { echo -e "${BLUE}[$(date +'%Y-%m-%d %H:%M:%S')] $1${NC}"; }
-success() { echo -e "${GREEN}[$(date +'%Y-%m-%d %H:%M:%S')] ✓ $1${NC}"; }
-warning() { echo -e "${YELLOW}[$(date +'%Y-%m-%d %H:%M:%S')] ⚠ $1${NC}"; }
-error() { echo -e "${RED}[$(date +'%Y-%m-%d %H:%M:%S')] ✗ $1${NC}"; }
 
 # --- Main Script ---
 
@@ -56,7 +47,7 @@ else
     warning "Base configuration already exists. Skipping generation."
 fi
 
-info "Base configuration is ready."
+log "Base configuration is ready."
 read -p "Press [Enter] to begin node discovery..."
 
 # Discover and provision nodes
@@ -176,7 +167,7 @@ for mac in "${!WORKER_MAP[@]}"; do
     talosctl --nodes "$static_ip" join --endpoints "$CONTROL_PLANE_IP" || error "Failed to join worker node $static_ip."
 done
 
-info "All nodes have been instructed to join the cluster."
+log "All nodes have been instructed to join the cluster."
 read -p "Press [Enter] to wait for all nodes to become ready..."
 
 # Final verification

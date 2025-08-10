@@ -52,24 +52,16 @@ elif [[ "$ENVIRONMENT" == "prod" ]]; then
     # --- Production Environment ---
 
     error "Production environment configuration is not yet defined."
-    exit 1
 
-    # CLUSTER_NAME="homelab-prod"
-    # API_SERVER="https://prod-api.local.homelabs.in:6443"
-    # CONTROL_PLANE_IP="<prod_cp1_ip>"
-    #
-    # declare -A CONTROL_PLANE_MAP
-    # CONTROL_PLANE_MAP["<prod_cp1_mac>"]="prod-controller1;<prod_cp1_ip>"
-    # # ...
-    # declare -A WORKER_MAP
-    # WORKER_MAP["<prod_worker1_mac>"]="prod-worker1;<prod_worker1_ip>"
-    # # ...
-    # declare -A CONTROL_PLANE_MAP=(
-    #     ["<prod_cp1_mac>"]="prod-controller1;<prod_cp1_ip>"
-    #     # ...
-    # )
-    # declare -A WORKER_MAP=(
-    #     ["<prod_worker1_mac>"]="prod-worker1;<prod_worker1_ip>"
+    declare -A CONTROL_PLANE_MAP
+    CONTROL_PLANE_MAP["<prod_cp1_mac>"]="prod-controller1;<prod_cp1_ip>"
+    CONTROL_PLANE_MAP["<prod_cp2_mac>"]="prod-controller2;<prod_cp2_ip>"
+    CONTROL_PLANE_MAP["<prod_cp3_mac>"]="prod-controller3;<prod_cp3_ip>"
+
+    declare -A WORKER_MAP
+    WORKER_MAP["<prod_worker1_mac>"]="prod-worker1;<prod_worker1_ip>"
+    WORKER_MAP["<prod_worker2_mac>"]="prod-worker2;<prod_worker2_ip>"
+    WORKER_MAP["<prod_worker3_mac>"]="prod-worker3;<prod_worker3_ip>"
     #     # ...
     # )
 fi
