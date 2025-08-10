@@ -21,6 +21,7 @@ NC='\033[0m' # No Color
 # Network Configuration
 GATEWAY_IP="192.168.0.1"
 DNS_SERVERS=("192.168.0.5" "8.8.8.8")
+NTP_SERVERS=("time.cloudflare.com" "pool.ntp.org")
 IP_CIDR="24"
 
 # Node definitions
@@ -129,6 +130,9 @@ while read -r line; do
 - op: add
   path: /machine/network/nameservers
   value: [${DNS_SERVERS[0]}, ${DNS_SERVERS[1]}]
+- op: add
+  path: /machine/time/servers
+  value: [${NTP_SERVERS[0]}, ${NTP_SERVERS[1]}]
 EOF
 )
 
