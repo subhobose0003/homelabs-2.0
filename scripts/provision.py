@@ -3,6 +3,7 @@ import os
 import subprocess
 import sys
 from datetime import datetime
+import time
 import tempfile
 import shutil
 
@@ -176,6 +177,15 @@ def main():
 
             log(f"Configuring {hostname} ({node_ip} -> {static_ip})...")
 
+            # Heuristic checks on base config to choose safe ops
+            try:
+                with open(base_config, 'r') as bf:
+                    base_text = bf.read()
+            except Exception:
+                base_text = ''
+            nameservers_op = 'replace' if 'nameservers:' in base_text else 'add'
+            has_install_parent = 'install:' in base_text
+
             config_patch = [
                 {'op': 'add', 'path': '/machine/network/hostname', 'value': hostname},
                 {'op': 'add', 'path': '/machine/network/interfaces', 'value': [
@@ -186,15 +196,22 @@ def main():
                         'routes': [{'network': '0.0.0.0/0', 'gateway': net_config['gateway_ip']}]
                     }
                 ]},
-                {'op': 'add', 'path': '/machine/network/nameservers', 'value': net_config['dns_servers']},
-                {'op': 'add', 'path': '/machine/time/servers', 'value': net_config['ntp_servers']},
-                {'op': 'add', 'path': '/machine/install/diskSelector', 'value': {'size': '< 50GB'}}
+                {'op': nameservers_op, 'path': '/machine/network/nameservers', 'value': net_config['dns_servers']},
+                # Ensure parent key exists before adding nested servers path
+                {'op': 'add', 'path': '/machine/time', 'value': {'servers': net_config['ntp_servers']}}
             ]
+
+            # Install diskSelector: if parent missing, create parent; else add child
+            if has_install_parent:
+                config_patch.append({'op': 'add', 'path': '/machine/install/diskSelector', 'value': {'size': '< 50GB'}})
+            else:
+                config_patch.append({'op': 'add', 'path': '/machine/install', 'value': {'diskSelector': {'size': '< 50GB'}}})
 
             patch_str = json.dumps(config_patch)
             # Apply base config plus per-node patch directly; no per-node secrets or files
             apply_result = subprocess.run([
                 'talosctl', 'apply-config', '--insecure',
+                '-e', node_ip,
                 '--nodes', node_ip,
                 '--file', base_config,
                 '--config-patch', patch_str
@@ -214,16 +231,65 @@ def main():
         except (KeyError, IndexError) as e:
             error(f"Failed to process node data for MAC {mac_addr}: {e}")
 
-    # Persist successfully provisioned nodes for dynamic join phase
+    # If no nodes applied successfully, abort early
+    if not successful_nodes:
+        error("No nodes were successfully configured. Please review errors above and retry.")
+        sys.exit(1)
+
+    # Wait for nodes to come back on their static IPs (maintenance->normal reboot)
+    log(f"Waiting for {len(successful_nodes)} node(s) to come up on their static IPs...")
+
+    # Allow overriding readiness timeout/interval via environment variables
+    try:
+        DEFAULT_TIMEOUT = int(os.getenv('PROVISION_NODE_TIMEOUT', '600'))
+    except ValueError:
+        DEFAULT_TIMEOUT = 600
+    try:
+        DEFAULT_INTERVAL = int(os.getenv('PROVISION_POLL_INTERVAL', '5'))
+    except ValueError:
+        DEFAULT_INTERVAL = 5
+
+    def wait_node_ready(ip: str, total_timeout: int = DEFAULT_TIMEOUT, interval: int = DEFAULT_INTERVAL) -> bool:
+        start = time.time()
+        spinner = ['|', '/', '-', '\\']
+        idx = 0
+        while time.time() - start < total_timeout:
+            # Stronger readiness: ensure machineconfig is retrievable via Talos API
+            rc = subprocess.run(['talosctl', 'get', 'machineconfig', '-e', ip, '-n', ip, '-i', '-o', 'json'], capture_output=True, text=True)
+            if rc.returncode == 0 and rc.stdout.strip():
+                return True
+            # spinner tick
+            print(f"\r  waiting {int(total_timeout - (time.time()-start))}s {spinner[idx%4]}", end='', flush=True)
+            idx += 1
+            time.sleep(interval)
+        print("\r  waiting timed out       ")
+        return False
+
+    ready_nodes = []
+    for n in successful_nodes:
+        ip = n['ip_address']
+        hostname = n['hostname']
+        log(f"Waiting for {hostname} at {ip}...")
+        if wait_node_ready(ip):
+            success(f"{hostname} is reachable on Talos API.")
+            ready_nodes.append(n)
+        else:
+            warning(f"{hostname} did not become ready in time; it will be skipped for joins.")
+
+    if not ready_nodes:
+        error("No nodes became ready after configuration. Aborting.")
+        sys.exit(1)
+
+    # Persist successfully provisioned and ready nodes for dynamic join phase
     try:
         provisioned_path = os.path.join(config_dir, 'provisioned_nodes.json')
         with open(provisioned_path, 'w') as f:
-            json.dump({'nodes': successful_nodes}, f, indent=2)
+            json.dump({'nodes': ready_nodes}, f, indent=2)
         log(f"Wrote provisioned node list to {provisioned_path}")
     except Exception as e:
         warning(f"Could not write provisioned_nodes.json: {e}")
 
-    success("Configuration process complete for all discovered nodes.")
+    success(f"Configuration process complete. {len(ready_nodes)}/{len(successful_nodes)} nodes are ready.")
 
 if __name__ == "__main__":
     main()
