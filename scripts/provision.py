@@ -24,6 +24,8 @@ def warning(message):
 def error(message):
     print(f"{RED}[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] ✗ {message}{NC}")
 
+import threading
+
 def main():
     if len(sys.argv) < 2:
         error("Usage: python provision.py [non-prod|prod]")
@@ -50,34 +52,58 @@ def main():
 
     node_count = len(nodes_map)
     log(f"Ready to provision {node_count} nodes. Boot your VMs now.")
-    log("Starting node discovery for 60 seconds...")
+    log("Starting continuous node discovery...")
+    log(f"{YELLOW}Press [Enter] when all desired nodes have been discovered.{NC}")
 
-    discovered_nodes = []
-    try:
-        # Discover nodes for a limited time
-        proc = subprocess.run(['talosctl', 'discover', '--timeout', '60s'], capture_output=True, text=True, check=True)
-        
-        # Process discovered nodes
-        for line in proc.stdout.strip().split('\n'):
+    discovered_nodes = {}
+    # Start discovery as a background process
+    discover_process = subprocess.Popen(
+        ['talosctl', 'discover'],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        bufsize=1 # Line-buffered
+    )
+
+    def read_discover_output(process, discovered_nodes_dict, nodes_map):
+        for line in iter(process.stdout.readline, ''):
             if not line:
-                continue
+                break
             try:
                 node_data = json.loads(line)
                 mac_addr = node_data.get('hardwareAddr', '').upper()
                 if mac_addr in nodes_map:
-                    node_data['config'] = nodes_map[mac_addr]
-                    discovered_nodes.append(node_data)
-                    log(f"Discovered known node with MAC {mac_addr} at IP {node_data.get('address')}")
+                    if mac_addr not in discovered_nodes_dict:
+                        hostname = nodes_map[mac_addr]['hostname']
+                        log(f"Discovered known node: {hostname} ({mac_addr}) at IP {node_data.get('address')}")
+                        node_data['config'] = nodes_map[mac_addr]
+                        discovered_nodes_dict[mac_addr] = node_data
                 else:
-                    warning(f"Discovered unknown node with MAC {mac_addr}. Skipping.")
-            except json.JSONDecodeError:
-                warning(f"Could not parse discovery line: {line}")
+                    if mac_addr not in discovered_nodes_dict:
+                        warning(f"Discovered unknown node with MAC {mac_addr}. Skipping.")
+                        # Store unknown nodes to avoid repeated warnings
+                        discovered_nodes_dict[mac_addr] = {'unknown': True}
+            except (json.JSONDecodeError, KeyError):
+                warning(f"Could not parse discovery line: {line.strip()}")
 
-    except subprocess.CalledProcessError as e:
-        error(f"Discovery process failed: {e.stderr}")
-        sys.exit(1)
+    reader_thread = threading.Thread(target=read_discover_output, args=(discover_process, discovered_nodes, nodes_map))
+    reader_thread.daemon = True
+    reader_thread.start()
 
-    if not discovered_nodes:
+    # Wait for user to press Enter
+    input()
+
+    log("Stopping discovery...")
+    discover_process.terminate()
+    reader_thread.join(timeout=2) # Wait briefly for the thread to exit
+    try:
+        discover_process.wait(timeout=5)
+    except subprocess.TimeoutExpired:
+        discover_process.kill()
+
+    final_discovered_nodes = [node for node in discovered_nodes.values() if not node.get('unknown')]
+
+    if not final_discovered_nodes:
         error("No known nodes were discovered. Please check VM status and network.")
         sys.exit(1)
 
@@ -85,17 +111,17 @@ def main():
     log("--- Discovered Nodes Summary ---")
     print(f"{YELLOW}{'MAC Address':<20}{'DHCP IP':<18}{'Hostname':<25}{'Static IP':<18}{NC}")
     print(f"{'='*20}{'='*18}{'='*25}{'='*18}")
-    for node in discovered_nodes:
+    for node in final_discovered_nodes:
         print(f"{node.get('hardwareAddr', '').upper():<20}{node.get('address'):<18}{node['config']['hostname']:<25}{node['config']['ip_address']:<18}")
     
     try:
-        input(f"\n{GREEN}Found {len(discovered_nodes)}/{node_count} nodes. Press [Enter] to apply configuration or Ctrl+C to abort...{NC}")
+        input(f"\n{GREEN}Found {len(final_discovered_nodes)}/{node_count} nodes. Press [Enter] to apply configuration or Ctrl+C to abort...{NC}")
     except KeyboardInterrupt:
         warning("\nUser aborted. No changes have been made.")
         sys.exit(0)
 
     # Apply configuration to all confirmed nodes
-    for node in discovered_nodes:
+    for node in final_discovered_nodes:
         try:
             node_ip = node.get('address')
             mac_addr = node.get('hardwareAddr', '').upper()
